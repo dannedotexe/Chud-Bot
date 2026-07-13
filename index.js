@@ -17,7 +17,7 @@ const {
   TextInputStyle, 
   StringSelectMenuBuilder, 
   EmbedBuilder,
-  ActivityType // Hinzugefügt für saubere Aktivitäts-Zuweisung
+  ActivityType // Für saubere Aktivitäts-Zuweisung (v14 Standard)
 } = require('discord.js');
 
 const { 
@@ -39,6 +39,9 @@ const client = new Client({
   ],
   partials: [Partials.Channel],
 });
+
+// Globale Zwischenspeicherung im RAM, um die ID-Schnittstelle sauber zu halten
+const vouchCache = new Map();
 
 // ==================== COMMAND REGISTRATION ====================
 
@@ -62,7 +65,7 @@ async function registerCommands() {
 // ==================== TICKET LOGIC ====================
 
 async function handleOpenTicket(interaction, ticketType, selectedItem = null) {
-  // Verhindert doppelte Tickets
+  // Verhindert doppelte geöffnete Tickets desselben Users in dieser Kategorie
   const existing = interaction.guild.channels.cache.find(ch => 
     ch.topic && ch.topic.startsWith(interaction.user.id) && ch.parentId === TICKET_CATEGORY_ID
   );
@@ -71,7 +74,8 @@ async function handleOpenTicket(interaction, ticketType, selectedItem = null) {
     return interaction.reply({ content: `You already have an open ticket: ${existing}`, ephemeral: true });
   }
 
-  // Sicherer Ticket-Zähler ohne die Kategorie umzubennen (Vermeidet Rate-Limits!)
+  // Zählt die Kanäle in der Kategorie, um eine fortlaufende Nummer zu generieren.
+  // Ändert NICHT den Kategorienamen (Verhindert strikte Discord Rate-Limits!)
   const ticketsCount = interaction.guild.channels.cache.filter(ch => ch.parentId === TICKET_CATEGORY_ID).size;
   const ticketNumber = String(ticketsCount + 1).padStart(4, '0');
 
@@ -108,9 +112,6 @@ async function handleOpenTicket(interaction, ticketType, selectedItem = null) {
   await interaction.reply({ content: `Ticket created: ${channel}`, ephemeral: true });
 }
 
-// Globale Zwischenspeicherung im RAM
-const vouchCache = new Map();
-
 async function handleCloseTicket(interaction, sendVouch) {
   if (!interaction.member.roles.cache.has(SUPPORT_ROLE_ID)) {
     return interaction.reply({ content: '❌ Only support staff members can close or cancel tickets!', ephemeral: true });
@@ -136,6 +137,7 @@ async function handleCloseTicket(interaction, sendVouch) {
       .setFooter({ text: 'Chud Hub • Your opinion matters', iconURL: interaction.guild.iconURL() })
       .setTimestamp();
 
+    // Generiert eine sichere, kurze ID für das Vouch-System im RAM
     const sessionID = Math.random().toString(36).substring(2, 10);
     vouchCache.set(sessionID, { product: finalProduct, staff: staffId });
       
@@ -143,6 +145,7 @@ async function handleCloseTicket(interaction, sendVouch) {
       new ButtonBuilder()
         .setCustomId(`vstart-${sessionID}`)
         .setLabel('Leave a Vouch')
+        .setEmoji('1526364588474372258')
         .setStyle(ButtonStyle.Success)
     );
     
@@ -202,7 +205,7 @@ async function handleVouchModalSubmit(interaction) {
   const rating = parts[1];
   
   const cachedData = vouchCache.get(sessionID) || { product: 'General Support', staff: 'none' };
-  vouchCache.delete(sessionID); 
+  vouchCache.delete(sessionID); // Bereinigt den RAM-Speicher
 
   const text = interaction.fields.getTextInputValue('vouch_text') || '*No comment left*';
   const stars = '⭐'.repeat(Number(rating || 5));
@@ -231,6 +234,7 @@ async function handleVouchModalSubmit(interaction) {
     await ch.send({ embeds: [embed] });
     await interaction.reply({ content: 'Your vouch has been successfully posted! Thank you.', ephemeral: true });
     
+    // Rollenvergabe
     if (guild && CUSTOMER_ROLE_ID) {
       try {
         const member = await guild.members.fetch(interaction.user.id).catch(() => null);
@@ -240,22 +244,35 @@ async function handleVouchModalSubmit(interaction) {
       } catch (err) { console.error('Role error:', err); }
     }
 
+    // "Buy Again"-Vorschlag nach 2 Sekunden senden (Ausfallsicher gegen geschlossene DMs)
     setTimeout(async () => {
       const upsellEmbed = new EmbedBuilder()
         .setColor(0xe74c3c)
         .setTitle('🛍️ Ready for more?')
-        .setDescription(`Thank you again for buying at **Chud Hub**!\n\nIf you want to place another order or browse our packages again, click the button below to go straight to our ticket channel!`);
+        .setDescription(`Thank you again for buying at **Chud Hub**!\n\nIf you want to place another order or browse our packages again, click the button below to go straight to our ticket channel! Our team is always ready to assist you! 🌟`);
       
-      // Korrigierter Discord-Link:
       const upsellRow = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
           .setLabel('Buy Again')
           .setEmoji('🛒')
           .setStyle(ButtonStyle.Link)
+          // Fehlerfreier und exakt formatierter Link
           .setUrl(`https://discord.com/channels/${GUILD_ID}/${TICKET_PANEL_CHANNEL_ID || '0'}`)
       );
-      await interaction.user.send({ embeds: [upsellEmbed], components: [upsellRow] }).catch(() => {});
+      
+      try {
+        // Erster Versuch: Als Direktnachricht (DM)
+        await interaction.user.send({ embeds: [upsellEmbed], components: [upsellRow] });
+      } catch (dmError) {
+        // Zweiter Versuch (Fallback): Sende es als flüchtiges (ephemeres) Follow-up, falls DMs blockiert sind
+        await interaction.followUp({ 
+          embeds: [upsellEmbed], 
+          components: [upsellRow], 
+          ephemeral: true 
+        }).catch(() => {});
+      }
     }, 2000);
+
   } else { 
     await interaction.reply({ content: '❌ Vouch channel could not be found.', ephemeral: true }); 
   }
@@ -311,7 +328,7 @@ client.on('ready', async () => {
   const statuses = ['at Chud Hub! Ready for your next package? 🛒', 'with custom bundles! Open a ticket now 🎫', 'to help you! Open an order ticket ✨'];
   let counter = 0; 
   
-  // Saubere Zuweisung mit ActivityType.Playing
+  // Saubere Zuweisung mit v14-gerechtem ActivityType.Playing
   client.user.setActivity(statuses[counter], { type: ActivityType.Playing });
   setInterval(() => { 
     counter = (counter + 1) % statuses.length; 
