@@ -51,11 +51,7 @@ async function registerCommands() {
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
         .toJSON()
     ];
-
-    await rest.put(
-      Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), 
-      { body: commands }
-    );
+    await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
     console.log('✅ Commands registered.');
   } catch (err) { 
     console.error('❌ Reg failed:', err); 
@@ -70,17 +66,22 @@ async function handleOpenTicket(interaction, ticketType, selectedItem = null) {
   );
   
   if (existing) {
-    return interaction.reply({ 
-      content: `You already have an open ticket: ${existing}`, 
-      ephemeral: true 
-    });
+    return interaction.reply({ content: `You already have an open ticket: ${existing}`, ephemeral: true });
   }
 
   const categoryChannel = interaction.guild.channels.cache.get(TICKET_CATEGORY_ID);
   let ticketNumber = 1;
+
   if (categoryChannel && categoryChannel.type === ChannelType.GuildCategory) {
-    const totalTickets = interaction.guild.channels.cache.filter(ch => ch.parentId === TICKET_CATEGORY_ID).size;
-    ticketNumber = totalTickets + 1;
+    const categoryName = categoryChannel.name;
+    const match = categoryName.match(/\d+$/);
+    if (match) {
+      ticketNumber = parseInt(match[0], 10) + 1;
+    } else {
+      ticketNumber = interaction.guild.channels.cache.filter(ch => ch.parentId === TICKET_CATEGORY_ID).size + 1;
+    }
+    const cleanCategoryName = categoryName.replace(/\s*\d+$/, '');
+    await categoryChannel.setName(`${cleanCategoryName} ${ticketNumber}`).catch(() => {});
   }
 
   const channelName = `${ticketType}-${ticketNumber}-${interaction.user.username}`.toLowerCase().slice(0, 90);
@@ -103,37 +104,21 @@ async function handleOpenTicket(interaction, ticketType, selectedItem = null) {
 
   if (ticketType === 'order') {
     titleText = '🛒 New Order Ticket';
-    descText = `Hi ${interaction.user}, thanks for wanting to place an order!\n\n` +
-               `**Selected Product:** \`${productString}\`\n\n` +
-               `Our team will assist you with the payment and delivery shortly.`;
+    descText = `Hi ${interaction.user}, thanks for wanting to place an order!\n\n**Selected Product:** \`${productString}\`\n\nOur team will assist you with the payment and delivery shortly.`;
   }
 
-  const embed = new EmbedBuilder()
-    .setColor(0x2b2d31)
-    .setTitle(titleText)
-    .setDescription(descText);
-    
+  const embed = new EmbedBuilder().setColor(0x2b2d31).setTitle(titleText).setDescription(descText);
   const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId('close_ticket_vouch')
-      .setLabel('Close & Vouch')
-      .setEmoji('🔒')
-      .setStyle(ButtonStyle.Danger),
-    new ButtonBuilder()
-      .setCustomId('close_ticket_cancel')
-      .setLabel('Cancel Ticket')
-      .setEmoji('❌')
-      .setStyle(ButtonStyle.Secondary)
+    new ButtonBuilder().setCustomId('close_ticket_vouch').setLabel('Close & Vouch').setEmoji('🔒').setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId('close_ticket_cancel').setLabel('Cancel Ticket').setEmoji('❌').setStyle(ButtonStyle.Secondary)
   );
 
-  await channel.send({ 
-    content: `${interaction.user} | <@&${SUPPORT_ROLE_ID}>`, 
-    embeds: [embed], 
-    components: [row] 
-  });
-  
+  await channel.send({ content: `${interaction.user} | <@&${SUPPORT_ROLE_ID}>`, embeds: [embed], components: [row] });
   await interaction.reply({ content: `Ticket created: ${channel}`, ephemeral: true });
 }
+// Globale Zwischenspeicherung im RAM, um den Fehler mit IDs mit Leerzeichen komplett zu umgehen
+const vouchCache = new Map();
+
 async function handleCloseTicket(interaction, sendVouch) {
   if (!interaction.member.roles.cache.has(SUPPORT_ROLE_ID)) {
     return interaction.reply({ content: '❌ Only support staff members can close or cancel tickets!', ephemeral: true });
@@ -149,7 +134,7 @@ async function handleCloseTicket(interaction, sendVouch) {
   if (sendVouch && ownerId) {
     const embed = new EmbedBuilder()
       .setColor(0xf5c518)
-      .setTitle('Thank you for your support!')
+      .setTitle('⭐ Thank you for your support!')
       .setDescription(`Your ticket regarding **${channel.name}** has been successfully closed.\n\nIf you were satisfied, please leave us a quick vouch! 🙏`)
       .addFields(
         { name: '📌 Product', value: `\`${finalProduct}\``, inline: true }, 
@@ -158,11 +143,14 @@ async function handleCloseTicket(interaction, sendVouch) {
       .setThumbnail(interaction.guild.iconURL({ dynamic: true, size: 512 }))
       .setFooter({ text: 'Chud Hub • Your opinion matters', iconURL: interaction.guild.iconURL() })
       .setTimestamp();
+
+    // Generiert eine absolut sichere, kurze Zufalls-ID für den Cache
+    const sessionID = Math.random().toString(36).substring(2, 10);
+    vouchCache.set(sessionID, { product: finalProduct, staff: staffId });
       
-    const hexData = Buffer.from(`${finalProduct}|${staffId}`, 'utf8').toString('hex');
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
-        .setCustomId(`vouch_start_${hexData}`)
+        .setCustomId(`vstart-${sessionID}`)
         .setLabel('Leave a Vouch')
         .setEmoji('1526364588474372258')
         .setStyle(ButtonStyle.Success)
@@ -181,10 +169,10 @@ async function handleCloseTicket(interaction, sendVouch) {
 // ==================== VOUCH SYSTEM ====================
 
 async function handleVouchStartButton(interaction) {
-  const hexData = interaction.customId.replace('vouch_start_', '');
+  const sessionID = interaction.customId.replace('vstart-', '');
   const row = new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
-      .setCustomId(`vouch_rating_${hexData}`)
+      .setCustomId(`vrating-${sessionID}`)
       .setPlaceholder('Select a star rating...')
       .addOptions([
         { label: '⭐ 1 - Very Unsatisfied', value: '1' }, 
@@ -198,11 +186,11 @@ async function handleVouchStartButton(interaction) {
 }
 
 async function handleVouchRatingSelect(interaction) {
-  const hexData = interaction.customId.replace('vouch_rating_', '');
-  const rating = interaction.values;
+  const sessionID = interaction.customId.replace('vrating-', '');
+  const rating = interaction.values[0];
   
   const modal = new ModalBuilder()
-    .setCustomId(`vouch_modal_${hexData}_${rating}`)
+    .setCustomId(`vmodal-${sessionID}-${rating}`)
     .setTitle('Submit Your Vouch');
     
   modal.addComponents(
@@ -218,27 +206,21 @@ async function handleVouchRatingSelect(interaction) {
   await interaction.showModal(modal);
 }
 async function handleVouchModalSubmit(interaction) {
-  const parts = interaction.customId.split('_');
-  const rating = parts;
-  const hexData = parts;
+  const parts = interaction.customId.replace('vmodal-', '').split('-');
+  const sessionID = parts[0];
+  const rating = parts[1];
   
-  let detectedProduct = 'General Support';
-  let detectedStaff = 'Unknown Staff';
-  
-  try { 
-    if (hexData) { 
-      const [product, staffId] = Buffer.from(hexData, 'hex').toString('utf8').split('|'); 
-      if (product) detectedProduct = product; 
-      if (staffId && staffId !== 'none') detectedStaff = `<@${staffId}>`; 
-    } 
-  } catch (e) { 
-    console.error(e); 
-  }
-  
+  // Ruft die echten, unbeschädigten Daten aus dem Cache ab
+  const cachedData = vouchCache.get(sessionID) || { product: 'General Support', staff: 'none' };
+  vouchCache.delete(sessionID); // Bereinigt den RAM-Speicher
+
   const text = interaction.fields.getTextInputValue('vouch_text') || '*No comment left*';
   const stars = '⭐'.repeat(Number(rating || 5));
   const guild = client.guilds.cache.get(GUILD_ID);
   
+  let staffMention = 'Unknown Staff';
+  if (cachedData.staff && cachedData.staff !== 'none') staffMention = `<@${cachedData.staff}>`;
+
   const embed = new EmbedBuilder()
     .setColor(0x2ecc71)
     .setTitle('📥 New Customer Vouch')
@@ -246,8 +228,8 @@ async function handleVouchModalSubmit(interaction) {
     .addFields(
       { name: '👤 Customer', value: `${interaction.user} (\`${interaction.user.tag}\`)`, inline: false }, 
       { name: '⭐ Rating', value: `${stars} (\`${rating || 5}/5\`)`, inline: true }, 
-      { name: '🛒 Product', value: `\`${detectedProduct}\``, inline: true }, 
-      { name: '🛠️ Handled By', value: detectedStaff, inline: false }, 
+      { name: '🛒 Product', value: `\`${cachedData.product}\``, inline: true }, 
+      { name: '🛠️ Handled By', value: staffMention, inline: false }, 
       { name: '💬 Comment', value: `\`\`\`\n${text}\n\`\`\``, inline: false }
     )
     .setThumbnail(interaction.user.displayAvatarURL({ dynamic: true }))
@@ -265,17 +247,11 @@ async function handleVouchModalSubmit(interaction) {
         if (member && !member.roles.cache.has(CUSTOMER_ROLE_ID)) {
           await member.roles.add(CUSTOMER_ROLE_ID);
         }
-      } catch (err) { 
-        console.error('Role error:', err); 
-      }
+      } catch (err) { console.error('Role error:', err); }
     }
 
     setTimeout(async () => {
-      const upsellEmbed = new EmbedBuilder()
-        .setColor(0xe74c3c)
-        .setTitle('🛍️ Ready for more?')
-        .setDescription(`Thank you again for buying at **Chud Hub**!\n\nIf you want to place another order or browse our packages again, click the button below to go straight to our ticket channel! Our team is always ready to assist you! 🌟`);
-        
+      const upsellEmbed = new EmbedBuilder().setColor(0xe74c3c).setTitle('🛍️ Ready for more?').setDescription(`Thank you again for buying at **Chud Hub**!\n\nIf you want to place another order or browse our packages again, click the button below to go straight to our ticket channel! Our team is always ready to assist you! 🌟`);
       const upsellRow = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
           .setLabel('Buy Again')
@@ -295,9 +271,7 @@ async function handleVouchModalSubmit(interaction) {
 client.on('interactionCreate', async (interaction) => {
   try {
     if (interaction.isChatInputCommand() && interaction.commandName === 'setup-tickets') {
-      const emb = new EmbedBuilder().setColor(0x2b2d31)
-        .setTitle('🎫 Tickets & Orders')
-        .setDescription('Need help or want to buy something? Choose an option below.');
+      const emb = new EmbedBuilder().setColor(0x2b2d31).setTitle('🎫 Tickets & Orders').setDescription('Need help or want to buy something? Choose an option below.');
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId('open_ticket_order').setLabel('Place Order').setEmoji('🛒').setStyle(ButtonStyle.Success), 
         new ButtonBuilder().setCustomId('open_ticket_support').setLabel('Support').setEmoji('🎫').setStyle(ButtonStyle.Primary)
@@ -325,26 +299,20 @@ client.on('interactionCreate', async (interaction) => {
       if (interaction.customId === 'open_ticket_support') return await handleOpenTicket(interaction, 'support');
       if (interaction.customId === 'close_ticket_vouch') return await handleCloseTicket(interaction, true);
       if (interaction.customId === 'close_ticket_cancel') return await handleCloseTicket(interaction, false);
-      if (interaction.customId.startsWith('vouch_start_')) return await handleVouchStartButton(interaction);
+      if (interaction.customId.startsWith('vstart-')) return await handleVouchStartButton(interaction);
     }
     
     if (interaction.isStringSelectMenu()) {
       if (interaction.customId === 'order_item_select') return await handleOpenTicket(interaction, 'order', interaction.values);
-      if (interaction.customId.startsWith('vouch_rating_')) return await handleVouchRatingSelect(interaction);
+      if (interaction.customId.startsWith('vrating-')) return await handleVouchRatingSelect(interaction);
     }
-    if (interaction.isModalSubmit() && interaction.customId.startsWith('vouch_modal_')) return await handleVouchModalSubmit(interaction);
-  } catch (err) { 
-    console.error(err); 
-  }
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('vmodal-')) return await handleVouchModalSubmit(interaction);
+  } catch (err) { console.error(err); }
 });
 
 client.on('ready', async () => {
   console.log(`🤖 Online as ${client.user.tag}`);
-  const statuses = [
-    'at Chud Hub! Ready for your next package? 🛒', 
-    'with custom bundles! Open a ticket now 🎫', 
-    'to help you! Open an order ticket ✨'
-  ];
+  const statuses = ['at Chud Hub! Ready for your next package? 🛒', 'with custom bundles! Open a ticket now 🎫', 'to help you! Open an order ticket ✨'];
   let counter = 0; 
   client.user.setActivity(statuses[counter], { type: 0 });
   setInterval(() => { 
