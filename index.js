@@ -360,10 +360,14 @@ client.on('interactionCreate', async (interaction) => {
   try {
     if (interaction.isChatInputCommand() && interaction.commandName === 'setup-tickets') {
       const emb = new EmbedBuilder().setColor(0x2b2d31).setTitle('🎫 Tickets & Orders').setDescription('Need help or want to buy something? Choose an option below.');
+      
+      // Erstellt drei Buttons: Place Order, Website (Link) und Support
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId('open_ticket_order').setLabel('Place Order').setEmoji('🛒').setStyle(ButtonStyle.Success), 
+        new ButtonBuilder().setLabel('Website').setEmoji('🌐').setStyle(ButtonStyle.Link).setURL('https://the-chud-hub.mysellauth.com/'),
         new ButtonBuilder().setCustomId('open_ticket_support').setLabel('Support').setEmoji('🎫').setStyle(ButtonStyle.Primary)
       );
+      
       await interaction.channel.send({ embeds: [emb], components: [row] });
       return await interaction.reply({ content: '✅ Ticket panel successfully setup!', ephemeral: true });
     }
