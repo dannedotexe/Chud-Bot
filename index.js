@@ -149,7 +149,7 @@ async function handleCloseTicket(interaction, sendVouch) {
   if (sendVouch && ownerId) {
     const embed = new EmbedBuilder()
       .setColor(0xf5c518)
-      .setTitle('⭐ Thank you for your support!')
+      .setTitle('<:Goldstar:1526364588474372258> Thank you for your support!')
       .setDescription(`Your ticket regarding **${channel.name}** has been successfully closed.\n\nIf you were satisfied, please leave us a quick vouch! 🙏`)
       .addFields(
         { name: '📌 Product', value: `\`${finalProduct}\``, inline: true }, 
@@ -164,7 +164,7 @@ async function handleCloseTicket(interaction, sendVouch) {
       new ButtonBuilder()
         .setCustomId(`vouch_start_${hexData}`)
         .setLabel('Leave a Vouch')
-        .setEmoji('⭐')
+        .setEmoji('1526364588474372258') // Nutzt deinen Custom-Goldstern als Button-Emoji
         .setStyle(ButtonStyle.Success)
     );
     
@@ -187,11 +187,11 @@ async function handleVouchStartButton(interaction) {
       .setCustomId(`vouch_rating_${hexData}`)
       .setPlaceholder('Select a star rating...')
       .addOptions([
-        { label: '⭐ 1 - Very Unsatisfied', value: '1' }, 
-        { label: '⭐⭐ 2 - Poor', value: '2' }, 
-        { label: '⭐⭐⭐ 3 - Satisfied', value: '3' }, 
-        { label: '⭐⭐⭐⭐ 4 - Very Good', value: '4' }, 
-        { label: '⭐⭐⭐⭐⭐ 5 - Perfect Service!', value: '5' }
+        { label: '1 - Very Unsatisfied', value: '1', emoji: { id: '1526364588474372258' } }, 
+        { label: '2 - Poor', value: '2', emoji: { id: '1526364588474372258' } }, 
+        { label: '3 - Satisfied', value: '3', emoji: { id: '1526364588474372258' } }, 
+        { label: '4 - Very Good', value: '4', emoji: { id: '1526364588474372258' } }, 
+        { label: '5 - Perfect Service!', value: '5', emoji: { id: '1526364588474372258' } }
       ])
   );
   await interaction.reply({ content: 'How many stars would you like to give us?', components: [row], ephemeral: true });
@@ -236,12 +236,14 @@ async function handleVouchModalSubmit(interaction) {
   }
   
   const text = interaction.fields.getTextInputValue('vouch_text') || '*No comment left*';
-  const stars = '⭐'.repeat(Number(rating || 5));
+  
+  // Schreibt die Custom-Goldsterne als Text in das finale Vouch-Embed
+  const stars = '<:Goldstar:1526364588474372258>'.repeat(Number(rating || 5));
   const guild = client.guilds.cache.get(GUILD_ID);
   
   const embed = new EmbedBuilder()
     .setColor(0x2ecc71)
-    .setTitle('📥 New Customer Vouch')
+    .setTitle('<:Goldstar:1526364588474372258> New Customer Vouch')
     .setDescription('A customer has just submitted a new review!')
     .addFields(
       { name: '👤 Customer', value: `${interaction.user} (\`${interaction.user.tag}\`)`, inline: false }, 
@@ -295,7 +297,9 @@ async function handleVouchModalSubmit(interaction) {
 client.on('interactionCreate', async (interaction) => {
   try {
     if (interaction.isChatInputCommand() && interaction.commandName === 'setup-tickets') {
-      const emb = new EmbedBuilder().setColor(0x2b2d31).setTitle('🎫 Tickets & Orders').setDescription('Need help or want to buy something? Choose an option below.');
+      const emb = new EmbedBuilder().setColor(0x2b2d31)
+        .setTitle('🎫 Tickets & Orders')
+        .setDescription('Need help or want to buy something? Choose an option below.');
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId('open_ticket_order').setLabel('Place Order').setEmoji('🛒').setStyle(ButtonStyle.Success), 
         new ButtonBuilder().setCustomId('open_ticket_support').setLabel('Support').setEmoji('🎫').setStyle(ButtonStyle.Primary)
@@ -327,7 +331,7 @@ client.on('interactionCreate', async (interaction) => {
     }
     
     if (interaction.isStringSelectMenu()) {
-      if (interaction.customId === 'order_item_select') return await handleOpenTicket(interaction, 'order', interaction.values);
+      if (interaction.customId === 'order_item_select') return await handleOpenTicket(interaction, 'order', interaction.values[0]);
       if (interaction.customId.startsWith('vouch_rating_')) return await handleVouchRatingSelect(interaction);
     }
     if (interaction.isModalSubmit() && interaction.customId.startsWith('vouch_modal_')) return await handleVouchModalSubmit(interaction);
