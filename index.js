@@ -169,7 +169,7 @@ async function handleCloseTicket(interaction, sendVouch) {
       .setTimestamp();
 
     const sessionID = Math.random().toString(36).substring(2, 10);
-    vouchCache.set(sessionID, { product: finalProduct, staff: staffId });
+    vouchCache.set(sessionID, { product: finalProduct, staff: staffId, used: false });
       
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
@@ -193,6 +193,16 @@ async function handleCloseTicket(interaction, sendVouch) {
 
 async function handleVouchStartButton(interaction) {
   const sessionID = interaction.customId.replace('vstart-', '');
+  const cachedData = vouchCache.get(sessionID);
+
+  // Überprüfen, ob die Session existiert oder ob der Vouch bereits genutzt wurde
+  if (!cachedData || cachedData.used) {
+    return interaction.reply({ 
+      content: '❌ You have already submitted a vouch for this purchase or this vouch session has expired!', 
+      ephemeral: true 
+    });
+  }
+
   const row = new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
       .setCustomId(`vrating-${sessionID}`)
@@ -211,6 +221,14 @@ async function handleVouchStartButton(interaction) {
 async function handleVouchRatingSelect(interaction) {
   const sessionID = interaction.customId.replace('vrating-', '');
   const rating = interaction.values[0];
+  const cachedData = vouchCache.get(sessionID);
+
+  if (!cachedData || cachedData.used) {
+    return interaction.reply({ 
+      content: '❌ This vouch session is no longer active or has already been used.', 
+      ephemeral: true 
+    });
+  }
   
   const modal = new ModalBuilder()
     .setCustomId(`vmodal-${sessionID}-${rating}`)
@@ -234,7 +252,23 @@ async function handleVouchModalSubmit(interaction) {
   const sessionID = parts[0];
   const rating = parts[1];
   
-  const cachedData = vouchCache.get(sessionID) || { product: 'General Support', staff: 'none' };
+  const cachedData = vouchCache.get(sessionID);
+
+  if (!cachedData || cachedData.used) {
+    return interaction.reply({ 
+      content: '❌ This vouch session has already been processed and cannot be submitted again.', 
+      ephemeral: true 
+    });
+  }
+
+  // Markiere die Session sofort als benutzt, um Doppel-Absendungen zu verhindern
+  cachedData.used = true;
+  vouchCache.set(sessionID, cachedData);
+
+  const finalProduct = cachedData.product || 'General Support';
+  const staffId = cachedData.staff || 'none';
+
+  // Lösche den Cache-Eintrag komplett nach erfolgreicher Verarbeitung
   vouchCache.delete(sessionID); 
 
   const text = interaction.fields.getTextInputValue('vouch_text') || '*No comment left*';
@@ -242,7 +276,7 @@ async function handleVouchModalSubmit(interaction) {
   const guild = client.guilds.cache.get(GUILD_ID);
   
   let staffMention = 'Unknown Staff';
-  if (cachedData.staff && cachedData.staff !== 'none') staffMention = `<@${cachedData.staff}>`;
+  if (staffId && staffId !== 'none') staffMention = `<@${staffId}>`;
 
   const embed = new EmbedBuilder()
     .setColor(0x2ecc71)
@@ -251,7 +285,7 @@ async function handleVouchModalSubmit(interaction) {
     .addFields(
       { name: '👤 Customer', value: `${interaction.user} (\`${interaction.user.tag}\`)`, inline: false }, 
       { name: '⭐ Rating', value: `${stars} (\`${rating || 5}/5\`)`, inline: true }, 
-      { name: '🛒 Product', value: `\`${cachedData.product}\``, inline: true }, 
+      { name: '🛒 Product', value: `\`${finalProduct}\``, inline: true }, 
       { name: '🛠️ Handled By', value: staffMention, inline: false }, 
       { name: '💬 Comment', value: `\`\`\`\n${text}\n\`\`\``, inline: false }
     )
@@ -287,12 +321,12 @@ async function handleVouchModalSubmit(interaction) {
         .setTitle('🛍️ Ready for more?')
         .setDescription(`Thank you again for buying at **Chud Hub**!\n\nIf you want to place another order or browse our packages again, click the button below to go straight to our ticket channel! Our team is always ready to assist you! 🌟`);
       
-      // Absolut fehlerfreie Link-Button Erstellung (KEIN setCustomId!)
+      // Fehlerfreie Link-Button Erstellung mit .setURL(...) in Großbuchstaben!
       const buyAgainBtn = new ButtonBuilder()
         .setLabel('Buy Again')
         .setEmoji('🛒')
         .setStyle(ButtonStyle.Link)
-        .setUrl(channelLink);
+        .setURL(channelLink);
 
       const upsellRow = new ActionRowBuilder().addComponents(buyAgainBtn);
       
