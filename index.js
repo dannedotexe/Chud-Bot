@@ -17,7 +17,7 @@ const {
   TextInputStyle, 
   StringSelectMenuBuilder, 
   EmbedBuilder,
-  ActivityType // Für saubere Aktivitäts-Zuweisung (v14 Standard)
+  ActivityType
 } = require('discord.js');
 
 const { 
@@ -40,7 +40,7 @@ const client = new Client({
   partials: [Partials.Channel],
 });
 
-// Globale Zwischenspeicherung im RAM, um die ID-Schnittstelle sauber zu halten
+// Globale Zwischenspeicherung im RAM
 const vouchCache = new Map();
 
 // ==================== COMMAND REGISTRATION ====================
@@ -74,10 +74,26 @@ async function handleOpenTicket(interaction, ticketType, selectedItem = null) {
     return interaction.reply({ content: `You already have an open ticket: ${existing}`, ephemeral: true });
   }
 
-  // Zählt die Kanäle in der Kategorie, um eine fortlaufende Nummer zu generieren.
-  // Ändert NICHT den Kategorienamen (Verhindert strikte Discord Rate-Limits!)
-  const ticketsCount = interaction.guild.channels.cache.filter(ch => ch.parentId === TICKET_CATEGORY_ID).size;
-  const ticketNumber = String(ticketsCount + 1).padStart(4, '0');
+  // Holt alle Kanäle aus der Kategorie & ermittelt die höchste Nummer
+  const categoryChannels = interaction.guild.channels.cache.filter(ch => ch.parentId === TICKET_CATEGORY_ID);
+  
+  let maxNumber = 0;
+  
+  categoryChannels.forEach(ch => {
+    const parts = ch.name.split('-');
+    // Sucht nach dem Teil im Namen, der nur aus Zahlen besteht (die Ticketnummer)
+    const numPart = parts.find(part => /^\d+$/.test(part));
+    if (numPart) {
+      const num = parseInt(numPart, 10);
+      if (num > maxNumber) {
+        maxNumber = num;
+      }
+    }
+  });
+
+  // Die neue Ticketnummer ist die höchste gefundene Nummer + 1 (zählt auch nach Löschungen richtig weiter)
+  const nextTicketNum = maxNumber + 1;
+  const ticketNumber = String(nextTicketNum).padStart(4, '0');
 
   const channelName = `${ticketType}-${ticketNumber}-${interaction.user.username}`.toLowerCase().slice(0, 90);
   const productString = selectedItem || 'General Support';
@@ -137,7 +153,6 @@ async function handleCloseTicket(interaction, sendVouch) {
       .setFooter({ text: 'Chud Hub • Your opinion matters', iconURL: interaction.guild.iconURL() })
       .setTimestamp();
 
-    // Generiert eine sichere, kurze ID für das Vouch-System im RAM
     const sessionID = Math.random().toString(36).substring(2, 10);
     vouchCache.set(sessionID, { product: finalProduct, staff: staffId });
       
@@ -145,7 +160,8 @@ async function handleCloseTicket(interaction, sendVouch) {
       new ButtonBuilder()
         .setCustomId(`vstart-${sessionID}`)
         .setLabel('Leave a Vouch')
-        .setEmoji('1526364588474372258')
+        // KORREKTES FORMAT: Custom-Emoji wird als Objekt mit ID übergeben, damit Discord es laden kann!
+        .setEmoji({ id: '1526364588474372258' })
         .setStyle(ButtonStyle.Success)
     );
     
@@ -205,7 +221,7 @@ async function handleVouchModalSubmit(interaction) {
   const rating = parts[1];
   
   const cachedData = vouchCache.get(sessionID) || { product: 'General Support', staff: 'none' };
-  vouchCache.delete(sessionID); // Bereinigt den RAM-Speicher
+  vouchCache.delete(sessionID); 
 
   const text = interaction.fields.getTextInputValue('vouch_text') || '*No comment left*';
   const stars = '⭐'.repeat(Number(rating || 5));
@@ -234,7 +250,6 @@ async function handleVouchModalSubmit(interaction) {
     await ch.send({ embeds: [embed] });
     await interaction.reply({ content: 'Your vouch has been successfully posted! Thank you.', ephemeral: true });
     
-    // Rollenvergabe
     if (guild && CUSTOMER_ROLE_ID) {
       try {
         const member = await guild.members.fetch(interaction.user.id).catch(() => null);
@@ -244,7 +259,7 @@ async function handleVouchModalSubmit(interaction) {
       } catch (err) { console.error('Role error:', err); }
     }
 
-    // "Buy Again"-Vorschlag nach 2 Sekunden senden (Ausfallsicher gegen geschlossene DMs)
+    // "Buy Again" nach 2 Sekunden senden (Sicher vor URL-Abstürzen & DM-Blockaden)
     setTimeout(async () => {
       const upsellEmbed = new EmbedBuilder()
         .setColor(0xe74c3c)
@@ -256,15 +271,14 @@ async function handleVouchModalSubmit(interaction) {
           .setLabel('Buy Again')
           .setEmoji('🛒')
           .setStyle(ButtonStyle.Link)
-          // Fehlerfreier und exakt formatierter Link
+          // KORREKT: Saubere URL mit /channels/ und korrektem Template-Literal $ vor GUILD_ID
           .setUrl(`https://discord.com/channels/${GUILD_ID}/${TICKET_PANEL_CHANNEL_ID || '0'}`)
       );
       
       try {
-        // Erster Versuch: Als Direktnachricht (DM)
         await interaction.user.send({ embeds: [upsellEmbed], components: [upsellRow] });
       } catch (dmError) {
-        // Zweiter Versuch (Fallback): Sende es als flüchtiges (ephemeres) Follow-up, falls DMs blockiert sind
+        // Fallback: Postet die Nachricht flüchtig direkt im Kanal, falls der User DMs deaktiviert hat
         await interaction.followUp({ 
           embeds: [upsellEmbed], 
           components: [upsellRow], 
@@ -315,7 +329,6 @@ client.on('interactionCreate', async (interaction) => {
     }
     
     if (interaction.isStringSelectMenu()) {
-      // interaction.values[0] statt des gesamten Arrays übergeben!
       if (interaction.customId === 'order_item_select') return await handleOpenTicket(interaction, 'order', interaction.values[0]);
       if (interaction.customId.startsWith('vrating-')) return await handleVouchRatingSelect(interaction);
     }
@@ -328,7 +341,6 @@ client.on('ready', async () => {
   const statuses = ['at Chud Hub! Ready for your next package? 🛒', 'with custom bundles! Open a ticket now 🎫', 'to help you! Open an order ticket ✨'];
   let counter = 0; 
   
-  // Saubere Zuweisung mit v14-gerechtem ActivityType.Playing
   client.user.setActivity(statuses[counter], { type: ActivityType.Playing });
   setInterval(() => { 
     counter = (counter + 1) % statuses.length; 
