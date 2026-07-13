@@ -25,7 +25,8 @@ const {
   GUILD_ID, 
   TICKET_CATEGORY_ID, 
   SUPPORT_ROLE_ID, 
-  VOUCH_CHANNEL_ID 
+  VOUCH_CHANNEL_ID,
+  TICKET_PANEL_CHANNEL_ID // Füge diese Variable neu in Railway hinzu!
 } = process.env;
 
 const client = new Client({
@@ -151,25 +152,31 @@ async function handleVouchStartButton(interaction) {
 }
 
 async function handleVouchRatingSelect(interaction) {
-  const hexData = interaction.customId.replace('vouch_rating_', ''), rating = interaction.values;
+  const hexData = interaction.customId.replace('vouch_rating_', ''), rating = interaction.values[0];
   const modal = new ModalBuilder().setCustomId(`vouch_modal_${hexData}_${rating}`).setTitle('Submit Your Vouch');
   modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('vouch_text').setLabel('Your Experience (Optional)').setPlaceholder('e.g., Super fast delivery!').setStyle(TextInputStyle.Paragraph).setRequired(false)));
   await interaction.showModal(modal);
 }
 
 async function handleVouchModalSubmit(interaction) {
-  const parts = interaction.customId.split('_'), rating = parts.pop(), hexData = parts.pop();
+  const parts = interaction.customId.split('_');
+  const rating = parts[3]; // Holt die Bewertung exakt an Position 3 ab
+  const hexData = parts[2]; // Holt den Hex-Code exakt an Position 2 ab
+  
   let detectedProduct = 'General Support', detectedStaff = 'Unknown Staff';
   try { if (hexData) { const [product, staffId] = Buffer.from(hexData, 'hex').toString('utf8').split('|'); if (product) detectedProduct = product; if (staffId && staffId !== 'none') detectedStaff = `<@${staffId}>`; } } catch (e) { console.error(e); }
   const text = interaction.fields.getTextInputValue('vouch_text') || '*No comment left*', stars = '⭐'.repeat(Number(rating)), guild = client.guilds.cache.get(GUILD_ID);
+  
   const embed = new EmbedBuilder().setColor(0x2ecc71).setTitle('📥 New Customer Vouch').setDescription('A customer has just submitted a new review!')
     .addFields({ name: '👤 Customer', value: `${interaction.user} (\`${interaction.user.tag}\`)`, inline: false }, { name: '⭐ Rating', value: `${stars} (\`${rating}/5\`)`, inline: true }, { name: '🛒 Product', value: `\`${detectedProduct}\``, inline: true }, { name: '🛠️ Handled By', value: detectedStaff, inline: false }, { name: '💬 Comment', value: `\`\`\`\n${text}\n\`\`\``, inline: false })
     .setThumbnail(interaction.user.displayAvatarURL({ dynamic: true })).setFooter({ text: 'Chud Hub • Verified Review', iconURL: guild?.iconURL() || null }).setTimestamp();
+  
   const ch = guild?.channels.cache.get(VOUCH_CHANNEL_ID) || await client.channels.fetch(VOUCH_CHANNEL_ID).catch(() => null);
   if (ch) {
     await ch.send({ embeds: [embed] });
     await interaction.reply({ content: 'Your vouch has been successfully posted! Thank you.', ephemeral: true });
     
+    // Sendet die Verkaufsförderung ohne jegliche Abstürze ab
     setTimeout(async () => {
       const upsellEmbed = new EmbedBuilder().setColor(0xe74c3c).setTitle('🛍️ Ready for more?').setDescription(`Thank you again for buying at **Chud Hub**!\n\nIf you want to place another order or browse our packages again, click the button below to go straight to our ticket channel! Our team is always ready to assist you! 🌟`);
       const upsellRow = new ActionRowBuilder().addComponents(
@@ -177,7 +184,7 @@ async function handleVouchModalSubmit(interaction) {
           .setLabel('Buy Again')
           .setEmoji('🛒')
           .setStyle(ButtonStyle.Link)
-          .setUrl(`https://discord.com{GUILD_ID}/1523874490768035886`) // HIER DEINE SEITENEIGENE TICKET-KANAL-ID EINTRAGEN
+          .setUrl(`https://discord.com{GUILD_ID}/${TICKET_PANEL_CHANNEL_ID || '0'}`)
       );
       await interaction.user.send({ embeds: [upsellEmbed], components: [upsellRow] }).catch(() => {});
     }, 2000);
@@ -206,7 +213,7 @@ client.on('interactionCreate', async (interaction) => {
       if (interaction.customId.startsWith('vouch_start_')) return await handleVouchStartButton(interaction);
     }
     if (interaction.isStringSelectMenu()) {
-      if (interaction.customId === 'order_item_select') return await handleOpenTicket(interaction, 'order', interaction.values);
+      if (interaction.customId === 'order_item_select') return await handleOpenTicket(interaction, 'order', interaction.values[0]);
       if (interaction.customId.startsWith('vouch_rating_')) return await handleVouchRatingSelect(interaction);
     }
     if (interaction.isModalSubmit() && interaction.customId.startsWith('vouch_modal_')) return await handleVouchModalSubmit(interaction);
