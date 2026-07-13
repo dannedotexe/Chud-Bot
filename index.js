@@ -61,20 +61,23 @@ async function registerCommands() {
 
 // ==================== TICKET LOGIC ====================
 
-async function handleOpenTicket(interaction) {
+async function handleOpenTicket(interaction, ticketType) {
   const existing = interaction.guild.channels.cache.find(ch => 
     ch.topic === interaction.user.id && ch.parentId === TICKET_CATEGORY_ID
   );
   
   if (existing) {
     return interaction.reply({ 
-      content: `You already have a ticket: ${existing}`, 
+      content: `You already have an open ticket: ${existing}`, 
       ephemeral: true 
     });
   }
 
+  // Erstellt den Kanalnamen basierend auf dem Typ (order-name oder support-name)
+  const channelName = `${ticketType}-${interaction.user.username}`.toLowerCase().slice(0, 90);
+
   const channel = await interaction.guild.channels.create({
-    name: `ticket-${interaction.user.username}`.toLowerCase().slice(0, 90),
+    name: channelName,
     type: ChannelType.GuildText, 
     parent: TICKET_CATEGORY_ID, 
     topic: interaction.user.id,
@@ -102,10 +105,15 @@ async function handleOpenTicket(interaction) {
     ],
   });
 
+  const titleText = ticketType === 'order' ? '🛒 New Order Ticket' : '🎫 New Support Ticket';
+  const descText = ticketType === 'order' 
+    ? `Hi ${interaction.user}, thanks for wanting to place an order!\n\nPlease describe what you would like to buy.`
+    : `Hi ${interaction.user}, thanks for reaching out!\n\nPlease describe your issue. Our team will help you shortly.`;
+
   const embed = new EmbedBuilder()
     .setColor(0x2b2d31)
-    .setTitle('🎫 New Ticket')
-    .setDescription(`Hi ${interaction.user}, please describe your request.`);
+    .setTitle(titleText)
+    .setDescription(descText);
     
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
@@ -231,13 +239,18 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.isChatInputCommand() && interaction.commandName === 'setup-tickets') {
       const emb = new EmbedBuilder()
         .setColor(0x2b2d31)
-        .setTitle('🎫 Tickets')
-        .setDescription('Click below to open a ticket.');
+        .setTitle('🎫 Tickets & Orders')
+        .setDescription('Need help or want to buy something? Choose the right option below to open a ticket.');
         
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
-          .setCustomId('open_ticket')
-          .setLabel('Open Ticket')
+          .setCustomId('open_ticket_order')
+          .setLabel('Place Order')
+          .setEmoji('🛒')
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId('open_ticket_support')
+          .setLabel('Support')
           .setEmoji('🎫')
           .setStyle(ButtonStyle.Primary)
       );
@@ -245,7 +258,8 @@ client.on('interactionCreate', async (interaction) => {
     }
     
     if (interaction.isButton()) {
-      if (interaction.customId === 'open_ticket') return await handleOpenTicket(interaction);
+      if (interaction.customId === 'open_ticket_order') return await handleOpenTicket(interaction, 'order');
+      if (interaction.customId === 'open_ticket_support') return await handleOpenTicket(interaction, 'support');
       if (interaction.customId === 'close_ticket') return await handleCloseTicket(interaction);
       if (interaction.customId.startsWith('vouch_start_')) return await handleVouchStartButton(interaction);
     }
