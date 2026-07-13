@@ -197,8 +197,11 @@ async function handleVouchStartButton(interaction) {
 
 async function handleVouchRatingSelect(interaction) {
   const ref = interaction.customId.replace('vouch_rating_', '');
+  const rating = interaction.values[0];
+
+  // Korrigiertes Trennzeichen (- anstelle von _), um Abstürze bei Produktnamen mit Leerzeichen zu verhindern
   const modal = new ModalBuilder()
-    .setCustomId(`vouch_modal_${ref}_${interaction.values}`)
+    .setCustomId(`vouchmodal-${ref}-${rating}`)
     .setTitle('Submit Your Vouch');
     
   modal.addComponents(
@@ -215,9 +218,10 @@ async function handleVouchRatingSelect(interaction) {
 }
 
 async function handleVouchModalSubmit(interaction) {
-  const parts = interaction.customId.split('_');
+  // Teilt die CustomID nun sicher anhand des Bindestrichs auf
+  const parts = interaction.customId.split('-');
   const rating = parts.pop();
-  const ticketRef = parts.slice(2).join('_');
+  const ticketRef = parts.slice(1).join('-');
   const text = interaction.fields.getTextInputValue('vouch_text') || '*No comment left*';
   const stars = '⭐'.repeat(Number(rating));
 
@@ -307,7 +311,8 @@ client.on('interactionCreate', async (interaction) => {
       }
     }
     
-    if (interaction.isModalSubmit() && interaction.customId.startsWith('vouch_modal_')) {
+    // Erkennt das korrigierte Modal-Präfix
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('vouchmodal-')) {
       return await handleVouchModalSubmit(interaction);
     }
   } catch (err) { 
