@@ -80,7 +80,8 @@ async function handleOpenTicket(interaction, ticketType, selectedItem = null) {
     name: channelName,
     type: ChannelType.GuildText, 
     parent: TICKET_CATEGORY_ID, 
-    topic: `${interaction.user.id}|${productString}`,
+    // Im Topic steht standardmäßig: UserID | Produkt | (Noch kein Staff)
+    topic: `${interaction.user.id}|${productString}|none`,
     permissionOverwrites: [
       { id: interaction.guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
       { id: interaction.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] },
@@ -136,6 +137,7 @@ async function handleCloseTicket(interaction, sendVouch) {
   const topicData = channel.topic || '';
   const [ownerId, productString] = topicData.split('|');
   const finalProduct = productString || 'General Support';
+  const staffId = interaction.user.id; // Die ID des Staff-Mitglieds, das schließt
   
   await interaction.reply({ content: '🔒 Closing this ticket in 5 seconds...' });
   
@@ -155,12 +157,12 @@ async function handleCloseTicket(interaction, sendVouch) {
       .setFooter({ text: 'Chud Hub • Your opinion matters', iconURL: interaction.guild.iconURL() })
       .setTimestamp();
 
-    // Wandelt den Produktnamen in einen sicheren Hex-String um, damit Sonderzeichen/Leerzeichen keine IDs zerstören
-    const hexProduct = Buffer.from(finalProduct, 'utf8').toString('hex');
+    // Wir updaten das Kanaltopic vor dem Löschen blitzschnell, damit die Staff-ID dauerhaft im verschlüsselten Hex-Code landet
+    const hexData = Buffer.from(`${finalProduct}|${staffId}`, 'utf8').toString('hex');
 
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
-        .setCustomId(`vouch_start_${hexProduct}`)
+        .setCustomId(`vouch_start_${hexData}`)
         .setLabel('Leave a Vouch')
         .setEmoji('⭐')
         .setStyle(ButtonStyle.Success)
@@ -182,12 +184,11 @@ async function handleCloseTicket(interaction, sendVouch) {
 // ==================== VOUCH SYSTEM ====================
 
 async function handleVouchStartButton(interaction) {
-  // Holt den sicheren Produkt-Hex-Code aus der Button-ID
-  const hexProduct = interaction.customId.replace('vouch_start_', '');
+  const hexData = interaction.customId.replace('vouch_start_', '');
 
   const row = new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
-      .setCustomId(`vouch_rating_${hexProduct}`)
+      .setCustomId(`vouch_rating_${hexData}`)
       .setPlaceholder('Select a star rating...')
       .addOptions([
         { label: '⭐ 1 - Very Unsatisfied', value: '1' }, 
@@ -201,12 +202,11 @@ async function handleVouchStartButton(interaction) {
 }
 
 async function handleVouchRatingSelect(interaction) {
-  const hexProduct = interaction.customId.replace('vouch_rating_', '');
-  const rating = interaction.values[0]; // Nutzt gezielt den ersten Eintrag
+  const hexData = interaction.customId.replace('vouch_rating_', '');
+  const rating = interaction.values; 
 
-  // Übergibt Produkt-Hex und Bewertung absolut sicher getrennt durch einen Unterstrich an das Modal
   const modal = new ModalBuilder()
-    .setCustomId(`vouch_modal_${hexProduct}_${rating}`)
+    .setCustomId(`vouch_modal_${hexData}_${rating}`)
     .setTitle('Submit Your Vouch');
     
   modal.addComponents(
@@ -225,22 +225,27 @@ async function handleVouchRatingSelect(interaction) {
 async function handleVouchModalSubmit(interaction) {
   const parts = interaction.customId.split('_');
   const rating = parts.pop();
-  const hexProduct = parts.pop();
+  const hexData = parts.pop();
   
-  // Übersetzt den Hex-Code hier im allerletzten Schritt wieder zurück in echten Text (z.B. GODMODE PACKAGE)
   let detectedProduct = 'General Support';
+  let detectedStaff = 'Unknown Staff';
+
   try {
-    if (hexProduct) {
-      detectedProduct = Buffer.from(hexProduct, 'hex').toString('utf8');
+    if (hexData) {
+      const decodedString = Buffer.from(hexData, 'hex').toString('utf8');
+      const [product, staffId] = decodedString.split('|');
+      if (product) detectedProduct = product;
+      if (staffId && staffId !== 'none') detectedStaff = `<@${staffId}>`;
     }
   } catch (e) {
-    console.error('Failed to decode product hex:', e);
+    console.error('Failed to decode hex data:', e);
   }
 
   const text = interaction.fields.getTextInputValue('vouch_text') || '*No comment left*';
   const stars = '⭐'.repeat(Number(rating));
   const guild = client.guilds.cache.get(GUILD_ID);
 
+  // Das erweiterte Vouch-Embed inklusive Support-Feld
   const embed = new EmbedBuilder()
     .setColor(0x2ecc71) 
     .setTitle('📥 New Customer Vouch')
@@ -249,6 +254,7 @@ async function handleVouchModalSubmit(interaction) {
       { name: '👤 Customer', value: `${interaction.user} (\`${interaction.user.tag}\`)`, inline: false },
       { name: '⭐ Rating', value: `${stars} (\`${rating}/5\`)`, inline: true },
       { name: '🛒 Product', value: `\`${detectedProduct}\``, inline: true },
+      { name: '🛠️ Handled By', value: detectedStaff, inline: false }, // Zeigt das Teammitglied an, das das Ticket geschlossen hat
       { name: '💬 Comment', value: `\`\`\`\n${text}\n\`\`\``, inline: false }
     )
     .setThumbnail(interaction.user.displayAvatarURL({ dynamic: true })) 
@@ -315,22 +321,18 @@ client.on('interactionCreate', async (interaction) => {
       if (interaction.customId === 'open_ticket_support') return await handleOpenTicket(interaction, 'support');
       if (interaction.customId === 'close_ticket_vouch') return await handleCloseTicket(interaction, true);
       if (interaction.customId === 'close_ticket_cancel') return await handleCloseTicket(interaction, false);
-      
-      // Erkennt die neue dynamische Button-ID
       if (interaction.customId.startsWith('vouch_start_')) return await handleVouchStartButton(interaction);
     }
     
     if (interaction.isStringSelectMenu()) {
       if (interaction.customId === 'order_item_select') {
-        return await handleOpenTicket(interaction, 'order', interaction.values[0]);
+        return await handleOpenTicket(interaction, 'order', interaction.values);
       }
-      // Erkennt das neue dynamische Sterne-Dropdown
       if (interaction.customId.startsWith('vouch_rating_')) {
         return await handleVouchRatingSelect(interaction);
       }
     }
     
-    // Erkennt das neue dynamische Modal-Fenster
     if (interaction.isModalSubmit() && interaction.customId.startsWith('vouch_modal_')) {
       return await handleVouchModalSubmit(interaction);
     }
@@ -345,5 +347,3 @@ client.on('ready', async () => {
 });
 
 client.login(DISCORD_TOKEN);
-
-
