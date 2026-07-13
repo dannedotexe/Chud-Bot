@@ -154,13 +154,11 @@ async function handleCloseTicket(interaction, sendVouch) {
       .setThumbnail('https://imgur.com')
       .setFooter({ text: 'Chud Hub • Your opinion matters', iconURL: interaction.guild.iconURL() })
       .setTimestamp();
-      
-    // Konvertiert eventuelle Leerzeichen im Produktnamen für die CustomID in Bindestriche
-    const safeProductRef = finalProduct.replace(/\s+/g, '-');
 
+    // Die ID bleibt jetzt permanent kurz und sicher
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
-        .setCustomId(`vouchstart-${safeProductRef}`)
+        .setCustomId('vouch_start')
         .setLabel('Leave a Vouch')
         .setEmoji('⭐')
         .setStyle(ButtonStyle.Success)
@@ -182,10 +180,9 @@ async function handleCloseTicket(interaction, sendVouch) {
 // ==================== VOUCH SYSTEM ====================
 
 async function handleVouchStartButton(interaction) {
-  const ref = interaction.customId.replace('vouchstart-', '');
   const row = new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
-      .setCustomId(`vouchrating-${ref}`)
+      .setCustomId('vouch_rating')
       .setPlaceholder('Select a star rating...')
       .addOptions([
         { label: '⭐ 1 - Very Unsatisfied', value: '1' }, 
@@ -199,12 +196,10 @@ async function handleVouchStartButton(interaction) {
 }
 
 async function handleVouchRatingSelect(interaction) {
-  const ref = interaction.customId.replace('vouchrating-', '');
-  // Zwingend den ersten Wert des Arrays [0] nehmen, um Kommas in der ID zu verhindern
   const rating = interaction.values[0]; 
 
   const modal = new ModalBuilder()
-    .setCustomId(`vouchmodal-${ref}-${rating}`)
+    .setCustomId(`vouch_modal_${rating}`)
     .setTitle('Submit Your Vouch');
     
   modal.addComponents(
@@ -221,14 +216,22 @@ async function handleVouchRatingSelect(interaction) {
 }
 
 async function handleVouchModalSubmit(interaction) {
-  const parts = interaction.customId.split('-');
-  const rating = parts.pop();
-  // Holt den Produktnamen zurück und ersetzt die Bindestriche wieder mit Leerzeichen für das Embed
-  const rawProduct = parts.slice(1).join('-');
-  const cleanProduct = rawProduct.replace(/-/g, ' ');
-  
+  const rating = interaction.customId.replace('vouch_modal_', '');
   const text = interaction.fields.getTextInputValue('vouch_text') || '*No comment left*';
   const stars = '⭐'.repeat(Number(rating));
+
+  // Wir holen den Server-Guild-Context, um an den geschlossenen Kanal oder dessen Logs zu kommen
+  const guild = client.guilds.cache.get(GUILD_ID);
+  let detectedProduct = 'General Support';
+
+  if (guild) {
+    // Sucht in den gecachten Kanälen nach dem Ticket dieses Users, um das Produkt aus dem Topic zu lesen
+    const ticketChannel = guild.channels.cache.find(ch => ch.topic && ch.topic.startsWith(interaction.user.id));
+    if (ticketChannel) {
+      const [, productString] = ticketChannel.topic.split('|');
+      if (productString) detectedProduct = productString;
+    }
+  }
 
   const embed = new EmbedBuilder()
     .setColor(0x2ecc71) 
@@ -237,14 +240,14 @@ async function handleVouchModalSubmit(interaction) {
     .addFields(
       { name: '👤 Customer', value: `${interaction.user} (\`${interaction.user.tag}\`)`, inline: false },
       { name: '⭐ Rating', value: `${stars} (\`${rating}/5\`)`, inline: true },
-      { name: '🛒 Product', value: `\`${cleanProduct || 'General Support'}\``, inline: true },
+      { name: '🛒 Product', value: `\`${detectedProduct}\``, inline: true },
       { name: '💬 Comment', value: `\`\`\`\n${text}\n\`\`\``, inline: false }
     )
     .setThumbnail(interaction.user.displayAvatarURL({ dynamic: true })) 
-    .setFooter({ text: 'Chud Hub • Verified Review', iconURL: interaction.guild.iconURL() })
+    .setFooter({ text: 'Chud Hub • Verified Review', iconURL: guild?.iconURL() || null })
     .setTimestamp();
     
-  const ch = interaction.guild?.channels.cache.get(VOUCH_CHANNEL_ID) 
+  const ch = guild?.channels.cache.get(VOUCH_CHANNEL_ID) 
     || await client.channels.fetch(VOUCH_CHANNEL_ID).catch(() => null);
     
   if (ch) { 
@@ -304,19 +307,19 @@ client.on('interactionCreate', async (interaction) => {
       if (interaction.customId === 'open_ticket_support') return await handleOpenTicket(interaction, 'support');
       if (interaction.customId === 'close_ticket_vouch') return await handleCloseTicket(interaction, true);
       if (interaction.customId === 'close_ticket_cancel') return await handleCloseTicket(interaction, false);
-      if (interaction.customId.startsWith('vouchstart-')) return await handleVouchStartButton(interaction);
+      if (interaction.customId === 'vouch_start') return await handleVouchStartButton(interaction);
     }
     
     if (interaction.isStringSelectMenu()) {
       if (interaction.customId === 'order_item_select') {
         return await handleOpenTicket(interaction, 'order', interaction.values[0]);
       }
-      if (interaction.customId.startsWith('vouchrating-')) {
+      if (interaction.customId === 'vouch_rating') {
         return await handleVouchRatingSelect(interaction);
       }
     }
     
-    if (interaction.isModalSubmit() && interaction.customId.startsWith('vouchmodal-')) {
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('vouch_modal_')) {
       return await handleVouchModalSubmit(interaction);
     }
   } catch (err) { 
