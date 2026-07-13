@@ -44,21 +44,33 @@ const client = new Client({
 
 // Globale Zwischenspeicherung im RAM
 const vouchCache = new Map();
-const counterFilePath = path.join(__dirname, 'counter.json');
 
-// ==================== COUNTER SYSTEM (OPTION A) ====================
+// Pfad zum permanenten Volume-Ordner auf Railway
+const volumeDirectory = '/app/data';
+const counterFilePath = path.join(volumeDirectory, 'counter.json');
+
+// ==================== COUNTER SYSTEM (MIT VOLUME) ====================
 
 function getNextTicketNumber() {
   try {
+    // Überprüfen, ob der Volume-Ordner existiert (falls lokal getestet wird, wird er erstellt)
+    if (!fs.existsSync(volumeDirectory)) {
+      fs.mkdirSync(volumeDirectory, { recursive: true });
+    }
+
+    // Wenn die Zähler-Datei noch nicht existiert, erstellen wir sie mit dem Startwert 0
     if (!fs.existsSync(counterFilePath)) {
       fs.writeFileSync(counterFilePath, JSON.stringify({ lastTicketNumber: 0 }));
     }
+
     const data = JSON.parse(fs.readFileSync(counterFilePath, 'utf8'));
     data.lastTicketNumber += 1;
+    
+    // Neue Ticketnummer im persistenten Volume speichern
     fs.writeFileSync(counterFilePath, JSON.stringify(data, null, 2));
     return data.lastTicketNumber;
   } catch (error) {
-    console.error("❌ Fehler beim Lesen/Schreiben des Ticket-Zählers:", error);
+    console.error("❌ Fehler beim Lesen/Schreiben im Volume Zähler:", error);
     return Math.floor(Math.random() * 1000); // Sicherheits-Fallback
   }
 }
@@ -94,7 +106,7 @@ async function handleOpenTicket(interaction, ticketType, selectedItem = null) {
     return interaction.reply({ content: `You already have an open ticket: ${existing}`, ephemeral: true });
   }
 
-  // Holt die fortlaufende Ticketnummer aus der counter.json-Datei
+  // Holt die fortlaufende Ticketnummer aus dem permanenten Volume
   const nextTicketNum = getNextTicketNumber();
   const ticketNumber = String(nextTicketNum).padStart(4, '0');
 
@@ -185,185 +197,4 @@ async function handleVouchStartButton(interaction) {
     new StringSelectMenuBuilder()
       .setCustomId(`vrating-${sessionID}`)
       .setPlaceholder('Select a star rating...')
-      .addOptions([
-        { label: '⭐ 1 - Very Unsatisfied', value: '1' }, 
-        { label: '⭐⭐ 2 - Poor', value: '2' }, 
-        { label: '⭐⭐⭐ 3 - Satisfied', value: '3' }, 
-        { label: '⭐⭐⭐⭐ 4 - Very Good', value: '4' }, 
-        { label: '⭐⭐⭐⭐⭐ 5 - Perfect Service!', value: '5' }
-      ])
-  );
-  await interaction.reply({ content: 'How many stars would you like to give us?', components: [row], ephemeral: true });
-}
-
-async function handleVouchRatingSelect(interaction) {
-  const sessionID = interaction.customId.replace('vrating-', '');
-  const rating = interaction.values[0];
-  
-  const modal = new ModalBuilder()
-    .setCustomId(`vmodal-${sessionID}-${rating}`)
-    .setTitle('Submit Your Vouch');
-    
-  modal.addComponents(
-    new ActionRowBuilder().addComponents(
-      new TextInputBuilder()
-        .setCustomId('vouch_text')
-        .setLabel('Your Experience (Optional)')
-        .setPlaceholder('e.g., Super fast delivery!')
-        .setStyle(TextInputStyle.Paragraph)
-        .setRequired(false)
-    )
-  );
-  await interaction.showModal(modal);
-}
-
-async function handleVouchModalSubmit(interaction) {
-  const parts = interaction.customId.replace('vmodal-', '').split('-');
-  const sessionID = parts[0];
-  const rating = parts[1];
-  
-  const cachedData = vouchCache.get(sessionID) || { product: 'General Support', staff: 'none' };
-  vouchCache.delete(sessionID); 
-
-  const text = interaction.fields.getTextInputValue('vouch_text') || '*No comment left*';
-  const stars = '⭐'.repeat(Number(rating || 5));
-  const guild = client.guilds.cache.get(GUILD_ID);
-  
-  let staffMention = 'Unknown Staff';
-  if (cachedData.staff && cachedData.staff !== 'none') staffMention = `<@${cachedData.staff}>`;
-
-  const embed = new EmbedBuilder()
-    .setColor(0x2ecc71)
-    .setTitle('📥 New Customer Vouch')
-    .setDescription('A customer has just submitted a new review!')
-    .addFields(
-      { name: '👤 Customer', value: `${interaction.user} (\`${interaction.user.tag}\`)`, inline: false }, 
-      { name: '⭐ Rating', value: `${stars} (\`${rating || 5}/5\`)`, inline: true }, 
-      { name: '🛒 Product', value: `\`${cachedData.product}\``, inline: true }, 
-      { name: '🛠️ Handled By', value: staffMention, inline: false }, 
-      { name: '💬 Comment', value: `\`\`\`\n${text}\n\`\`\``, inline: false }
-    )
-    .setThumbnail(interaction.user.displayAvatarURL({ dynamic: true }))
-    .setFooter({ text: 'Chud Hub • Verified Review', iconURL: guild?.iconURL() || null })
-    .setTimestamp();
-  
-  const ch = guild?.channels.cache.get(VOUCH_CHANNEL_ID) || await client.channels.fetch(VOUCH_CHANNEL_ID).catch(() => null);
-  if (ch) {
-    await ch.send({ embeds: [embed] });
-    await interaction.reply({ content: 'Your vouch has been successfully posted! Thank you.', ephemeral: true });
-    
-    if (guild && CUSTOMER_ROLE_ID) {
-      try {
-        const member = await guild.members.fetch(interaction.user.id).catch(() => null);
-        if (member && !member.roles.cache.has(CUSTOMER_ROLE_ID)) {
-          await member.roles.add(CUSTOMER_ROLE_ID);
-        }
-      } catch (err) { console.error('❌ Rollenfehler:', err); }
-    }
-
-    // "Buy Again" nach 2 Sekunden senden
-    setTimeout(async () => {
-      if (!GUILD_ID || !TICKET_PANEL_CHANNEL_ID) {
-        console.warn("⚠️ Warnung: GUILD_ID oder TICKET_PANEL_CHANNEL_ID fehlt in der .env!");
-      }
-
-      const channelLink = `https://discord.com/channels/${GUILD_ID}/${TICKET_PANEL_CHANNEL_ID || '0'}`;
-      console.log(`🔗 Versuche 'Buy Again' zu senden mit URL: ${channelLink}`);
-
-      const upsellEmbed = new EmbedBuilder()
-        .setColor(0xe74c3c)
-        .setTitle('🛍️ Ready for more?')
-        .setDescription(`Thank you again for buying at **Chud Hub**!\n\nIf you want to place another order or browse our packages again, click the button below to go straight to our ticket channel! Our team is always ready to assist you! 🌟`);
-      
-      // Fehlerfreier Link-Button ohne Custom ID (Behebt den TypeError)
-      const buyAgainBtn = new ButtonBuilder()
-        .setLabel('Buy Again')
-        .setEmoji('🛒')
-        .setStyle(ButtonStyle.Link)
-        .setUrl(channelLink);
-
-      const upsellRow = new ActionRowBuilder().addComponents(buyAgainBtn);
-      
-      try {
-        await interaction.user.send({ embeds: [upsellEmbed], components: [upsellRow] });
-        console.log("✅ 'Buy Again' wurde erfolgreich per DM gesendet.");
-      } catch (dmError) {
-        console.error("❌ DM gescheitert. Grund:", dmError.message, "- Versuche Fallback im Chat...");
-        
-        // Fallback im Kanal
-        await interaction.followUp({ 
-          embeds: [upsellEmbed], 
-          components: [upsellRow], 
-          ephemeral: true 
-        }).then(() => {
-          console.log("✅ 'Buy Again' wurde erfolgreich als flüchtiges Followup im Kanal gepostet.");
-        }).catch((followUpError) => {
-          console.error("❌ Fallback im Kanal ist ebenfalls gescheitert! Grund:", followUpError.message);
-        });
-      }
-    }, 2000);
-
-  } else { 
-    await interaction.reply({ content: '❌ Vouch channel could not be found.', ephemeral: true }); 
-  }
-}
-
-// ==================== EVENTS ====================
-
-client.on('interactionCreate', async (interaction) => {
-  try {
-    if (interaction.isChatInputCommand() && interaction.commandName === 'setup-tickets') {
-      const emb = new EmbedBuilder().setColor(0x2b2d31).setTitle('🎫 Tickets & Orders').setDescription('Need help or want to buy something? Choose an option below.');
-      const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('open_ticket_order').setLabel('Place Order').setEmoji('🛒').setStyle(ButtonStyle.Success), 
-        new ButtonBuilder().setCustomId('open_ticket_support').setLabel('Support').setEmoji('🎫').setStyle(ButtonStyle.Primary)
-      );
-      await interaction.channel.send({ embeds: [emb], components: [row] });
-      return await interaction.reply({ content: '✅ Ticket panel successfully setup!', ephemeral: true });
-    }
-    
-    if (interaction.isButton()) {
-      if (interaction.customId === 'open_ticket_order') {
-        const itemRow = new ActionRowBuilder().addComponents(
-          new StringSelectMenuBuilder().setCustomId('order_item_select').setPlaceholder('Select the package you want to buy...')
-            .addOptions([
-              { label: 'Boost bundle - £9.99', value: 'Boost bundle' }, 
-              { label: 'Grind pack - £13.00', value: 'Grind pack' }, 
-              { label: 'Builder pack - £19.99', value: 'Builder pack' }, 
-              { label: 'Empire pack - £29.99', value: 'Empire pack' }, 
-              { label: 'GODMODE PACKAGE - £42.99', value: 'GODMODE PACKAGE' }, 
-              { label: 'Chud Hub special - £112.31', value: 'Chud Hub special' }, 
-              { label: '10 modded outfits - £10.00', value: '10 modded outfits' }
-            ])
-        );
-        return await interaction.reply({ content: 'Please select what you would like to order:', components: [itemRow], ephemeral: true });
-      }
-      if (interaction.customId === 'open_ticket_support') return await handleOpenTicket(interaction, 'support');
-      if (interaction.customId === 'close_ticket_vouch') return await handleCloseTicket(interaction, true);
-      if (interaction.customId === 'close_ticket_cancel') return await handleCloseTicket(interaction, false);
-      if (interaction.customId.startsWith('vstart-')) return await handleVouchStartButton(interaction);
-    }
-    
-    if (interaction.isStringSelectMenu()) {
-      if (interaction.customId === 'order_item_select') return await handleOpenTicket(interaction, 'order', interaction.values[0]);
-      if (interaction.customId.startsWith('vrating-')) return await handleVouchRatingSelect(interaction);
-    }
-    if (interaction.isModalSubmit() && interaction.customId.startsWith('vmodal-')) return await handleVouchModalSubmit(interaction);
-  } catch (err) { console.error(err); }
-});
-
-client.on('ready', async () => {
-  console.log(`🤖 Online as ${client.user.tag}`);
-  const statuses = ['at Chud Hub! Ready for your next package? 🛒', 'with custom bundles! Open a ticket now 🎫', 'to help you! Open an order ticket ✨'];
-  let counter = 0; 
-  
-  client.user.setActivity(statuses[counter], { type: ActivityType.Playing });
-  setInterval(() => { 
-    counter = (counter + 1) % statuses.length; 
-    client.user.setActivity(statuses[counter], { type: ActivityType.Playing }); 
-  }, 60000);
-  await registerCommands();
-});
-
-client.on('error', console.error);
-client.login(DISCORD_TOKEN);
+      .addOptions(
