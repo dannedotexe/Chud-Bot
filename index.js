@@ -160,7 +160,7 @@ async function handleCloseTicket(interaction, sendVouch) {
       new ButtonBuilder()
         .setCustomId(`vstart-${sessionID}`)
         .setLabel('Leave a Vouch')
-        // Custom-Emoji als Objekt übergeben
+        // Custom-Emoji als Objekt übergeben (Kein Absturz)
         .setEmoji({ id: '1526364588474372258' })
         .setStyle(ButtonStyle.Success)
     );
@@ -259,7 +259,7 @@ async function handleVouchModalSubmit(interaction) {
       } catch (err) { console.error('❌ Rollenfehler:', err); }
     }
 
-    // "Buy Again" nach 2 Sekunden senden (mit detaillierter Fehlerausgabe im Terminal)
+    // "Buy Again" nach 2 Sekunden senden
     setTimeout(async () => {
       if (!GUILD_ID || !TICKET_PANEL_CHANNEL_ID) {
         console.warn("⚠️ Warnung: GUILD_ID oder TICKET_PANEL_CHANNEL_ID fehlt in der .env!");
@@ -273,13 +273,14 @@ async function handleVouchModalSubmit(interaction) {
         .setTitle('🛍️ Ready for more?')
         .setDescription(`Thank you again for buying at **Chud Hub**!\n\nIf you want to place another order or browse our packages again, click the button below to go straight to our ticket channel! Our team is always ready to assist you! 🌟`);
       
-      const upsellRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setLabel('Buy Again')
-          .setEmoji('🛒')
-          .setStyle(ButtonStyle.Link)
-          .setUrl(channelLink)
-      );
+      // Fehlerfreier ButtonBuilder ohne Custom ID und direkter Link-Zuweisung
+      const buyAgainBtn = new ButtonBuilder()
+        .setLabel('Buy Again')
+        .setEmoji('🛒')
+        .setStyle(ButtonStyle.Link)
+        .setUrl(channelLink);
+
+      const upsellRow = new ActionRowBuilder().addComponents(buyAgainBtn);
       
       try {
         await interaction.user.send({ embeds: [upsellEmbed], components: [upsellRow] });
@@ -287,7 +288,7 @@ async function handleVouchModalSubmit(interaction) {
       } catch (dmError) {
         console.error("❌ DM gescheitert. Grund:", dmError.message, "- Versuche Fallback im Chat...");
         
-        // Versuche das Fallback im Kanal
+        // Fallback im Kanal
         await interaction.followUp({ 
           embeds: [upsellEmbed], 
           components: [upsellRow], 
