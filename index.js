@@ -155,10 +155,12 @@ async function handleCloseTicket(interaction, sendVouch) {
       .setFooter({ text: 'Chud Hub • Your opinion matters', iconURL: interaction.guild.iconURL() })
       .setTimestamp();
 
-    // Die ID bleibt jetzt permanent kurz und sicher
+    // Wandelt den Produktnamen in einen sicheren Hex-String um, damit Sonderzeichen/Leerzeichen keine IDs zerstören
+    const hexProduct = Buffer.from(finalProduct, 'utf8').toString('hex');
+
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
-        .setCustomId('vouch_start')
+        .setCustomId(`vouch_start_${hexProduct}`)
         .setLabel('Leave a Vouch')
         .setEmoji('⭐')
         .setStyle(ButtonStyle.Success)
@@ -180,9 +182,12 @@ async function handleCloseTicket(interaction, sendVouch) {
 // ==================== VOUCH SYSTEM ====================
 
 async function handleVouchStartButton(interaction) {
+  // Holt den sicheren Produkt-Hex-Code aus der Button-ID
+  const hexProduct = interaction.customId.replace('vouch_start_', '');
+
   const row = new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
-      .setCustomId('vouch_rating')
+      .setCustomId(`vouch_rating_${hexProduct}`)
       .setPlaceholder('Select a star rating...')
       .addOptions([
         { label: '⭐ 1 - Very Unsatisfied', value: '1' }, 
@@ -196,10 +201,12 @@ async function handleVouchStartButton(interaction) {
 }
 
 async function handleVouchRatingSelect(interaction) {
-  const rating = interaction.values[0]; 
+  const hexProduct = interaction.customId.replace('vouch_rating_', '');
+  const rating = interaction.values[0]; // Nutzt gezielt den ersten Eintrag
 
+  // Übergibt Produkt-Hex und Bewertung absolut sicher getrennt durch einen Unterstrich an das Modal
   const modal = new ModalBuilder()
-    .setCustomId(`vouch_modal_${rating}`)
+    .setCustomId(`vouch_modal_${hexProduct}_${rating}`)
     .setTitle('Submit Your Vouch');
     
   modal.addComponents(
@@ -216,22 +223,23 @@ async function handleVouchRatingSelect(interaction) {
 }
 
 async function handleVouchModalSubmit(interaction) {
-  const rating = interaction.customId.replace('vouch_modal_', '');
+  const parts = interaction.customId.split('_');
+  const rating = parts.pop();
+  const hexProduct = parts.pop();
+  
+  // Übersetzt den Hex-Code hier im allerletzten Schritt wieder zurück in echten Text (z.B. GODMODE PACKAGE)
+  let detectedProduct = 'General Support';
+  try {
+    if (hexProduct) {
+      detectedProduct = Buffer.from(hexProduct, 'hex').toString('utf8');
+    }
+  } catch (e) {
+    console.error('Failed to decode product hex:', e);
+  }
+
   const text = interaction.fields.getTextInputValue('vouch_text') || '*No comment left*';
   const stars = '⭐'.repeat(Number(rating));
-
-  // Wir holen den Server-Guild-Context, um an den geschlossenen Kanal oder dessen Logs zu kommen
   const guild = client.guilds.cache.get(GUILD_ID);
-  let detectedProduct = 'General Support';
-
-  if (guild) {
-    // Sucht in den gecachten Kanälen nach dem Ticket dieses Users, um das Produkt aus dem Topic zu lesen
-    const ticketChannel = guild.channels.cache.find(ch => ch.topic && ch.topic.startsWith(interaction.user.id));
-    if (ticketChannel) {
-      const [, productString] = ticketChannel.topic.split('|');
-      if (productString) detectedProduct = productString;
-    }
-  }
 
   const embed = new EmbedBuilder()
     .setColor(0x2ecc71) 
@@ -307,18 +315,22 @@ client.on('interactionCreate', async (interaction) => {
       if (interaction.customId === 'open_ticket_support') return await handleOpenTicket(interaction, 'support');
       if (interaction.customId === 'close_ticket_vouch') return await handleCloseTicket(interaction, true);
       if (interaction.customId === 'close_ticket_cancel') return await handleCloseTicket(interaction, false);
-      if (interaction.customId === 'vouch_start') return await handleVouchStartButton(interaction);
+      
+      // Erkennt die neue dynamische Button-ID
+      if (interaction.customId.startsWith('vouch_start_')) return await handleVouchStartButton(interaction);
     }
     
     if (interaction.isStringSelectMenu()) {
       if (interaction.customId === 'order_item_select') {
         return await handleOpenTicket(interaction, 'order', interaction.values[0]);
       }
-      if (interaction.customId === 'vouch_rating') {
+      // Erkennt das neue dynamische Sterne-Dropdown
+      if (interaction.customId.startsWith('vouch_rating_')) {
         return await handleVouchRatingSelect(interaction);
       }
     }
     
+    // Erkennt das neue dynamische Modal-Fenster
     if (interaction.isModalSubmit() && interaction.customId.startsWith('vouch_modal_')) {
       return await handleVouchModalSubmit(interaction);
     }
@@ -333,4 +345,5 @@ client.on('ready', async () => {
 });
 
 client.login(DISCORD_TOKEN);
+
 
