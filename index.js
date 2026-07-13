@@ -155,9 +155,12 @@ async function handleCloseTicket(interaction, sendVouch) {
       .setFooter({ text: 'Chud Hub • Your opinion matters', iconURL: interaction.guild.iconURL() })
       .setTimestamp();
       
+    // Konvertiert eventuelle Leerzeichen im Produktnamen für die CustomID in Bindestriche
+    const safeProductRef = finalProduct.replace(/\s+/g, '-');
+
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
-        .setCustomId(`vouch_start_${finalProduct}`)
+        .setCustomId(`vouchstart-${safeProductRef}`)
         .setLabel('Leave a Vouch')
         .setEmoji('⭐')
         .setStyle(ButtonStyle.Success)
@@ -179,10 +182,10 @@ async function handleCloseTicket(interaction, sendVouch) {
 // ==================== VOUCH SYSTEM ====================
 
 async function handleVouchStartButton(interaction) {
-  const ref = interaction.customId.replace('vouch_start_', '');
+  const ref = interaction.customId.replace('vouchstart-', '');
   const row = new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
-      .setCustomId(`vouch_rating_${ref}`)
+      .setCustomId(`vouchrating-${ref}`)
       .setPlaceholder('Select a star rating...')
       .addOptions([
         { label: '⭐ 1 - Very Unsatisfied', value: '1' }, 
@@ -196,10 +199,10 @@ async function handleVouchStartButton(interaction) {
 }
 
 async function handleVouchRatingSelect(interaction) {
-  const ref = interaction.customId.replace('vouch_rating_', '');
-  const rating = interaction.values[0];
+  const ref = interaction.customId.replace('vouchrating-', '');
+  // Zwingend den ersten Wert des Arrays [0] nehmen, um Kommas in der ID zu verhindern
+  const rating = interaction.values[0]; 
 
-  // Korrigiertes Trennzeichen (- anstelle von _), um Abstürze bei Produktnamen mit Leerzeichen zu verhindern
   const modal = new ModalBuilder()
     .setCustomId(`vouchmodal-${ref}-${rating}`)
     .setTitle('Submit Your Vouch');
@@ -218,10 +221,12 @@ async function handleVouchRatingSelect(interaction) {
 }
 
 async function handleVouchModalSubmit(interaction) {
-  // Teilt die CustomID nun sicher anhand des Bindestrichs auf
   const parts = interaction.customId.split('-');
   const rating = parts.pop();
-  const ticketRef = parts.slice(1).join('-');
+  // Holt den Produktnamen zurück und ersetzt die Bindestriche wieder mit Leerzeichen für das Embed
+  const rawProduct = parts.slice(1).join('-');
+  const cleanProduct = rawProduct.replace(/-/g, ' ');
+  
   const text = interaction.fields.getTextInputValue('vouch_text') || '*No comment left*';
   const stars = '⭐'.repeat(Number(rating));
 
@@ -232,7 +237,7 @@ async function handleVouchModalSubmit(interaction) {
     .addFields(
       { name: '👤 Customer', value: `${interaction.user} (\`${interaction.user.tag}\`)`, inline: false },
       { name: '⭐ Rating', value: `${stars} (\`${rating}/5\`)`, inline: true },
-      { name: '🛒 Product', value: `\`${ticketRef || 'General Support'}\``, inline: true },
+      { name: '🛒 Product', value: `\`${cleanProduct || 'General Support'}\``, inline: true },
       { name: '💬 Comment', value: `\`\`\`\n${text}\n\`\`\``, inline: false }
     )
     .setThumbnail(interaction.user.displayAvatarURL({ dynamic: true })) 
@@ -299,19 +304,18 @@ client.on('interactionCreate', async (interaction) => {
       if (interaction.customId === 'open_ticket_support') return await handleOpenTicket(interaction, 'support');
       if (interaction.customId === 'close_ticket_vouch') return await handleCloseTicket(interaction, true);
       if (interaction.customId === 'close_ticket_cancel') return await handleCloseTicket(interaction, false);
-      if (interaction.customId.startsWith('vouch_start_')) return await handleVouchStartButton(interaction);
+      if (interaction.customId.startsWith('vouchstart-')) return await handleVouchStartButton(interaction);
     }
     
     if (interaction.isStringSelectMenu()) {
       if (interaction.customId === 'order_item_select') {
         return await handleOpenTicket(interaction, 'order', interaction.values[0]);
       }
-      if (interaction.customId.startsWith('vouch_rating_')) {
+      if (interaction.customId.startsWith('vouchrating-')) {
         return await handleVouchRatingSelect(interaction);
       }
     }
     
-    // Erkennt das korrigierte Modal-Präfix
     if (interaction.isModalSubmit() && interaction.customId.startsWith('vouchmodal-')) {
       return await handleVouchModalSubmit(interaction);
     }
@@ -326,3 +330,4 @@ client.on('ready', async () => {
 });
 
 client.login(DISCORD_TOKEN);
+
