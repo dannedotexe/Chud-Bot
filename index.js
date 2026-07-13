@@ -80,7 +80,6 @@ async function handleOpenTicket(interaction, ticketType, selectedItem = null) {
     name: channelName,
     type: ChannelType.GuildText, 
     parent: TICKET_CATEGORY_ID, 
-    // Wir speichern die User-ID UND das gewählte Produkt im Topic (durch ein | getrennt)
     topic: `${interaction.user.id}|${productString}`,
     permissionOverwrites: [
       { id: interaction.guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
@@ -104,7 +103,6 @@ async function handleOpenTicket(interaction, ticketType, selectedItem = null) {
     .setTitle(titleText)
     .setDescription(descText);
     
-  // Zwei Buttons: Einmal mit Vouch-Abfrage, einmal für wortloses Abbrechen
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId('close_ticket_vouch')
@@ -127,7 +125,6 @@ async function handleOpenTicket(interaction, ticketType, selectedItem = null) {
   await interaction.reply({ content: `Ticket created: ${channel}`, ephemeral: true });
 }
 async function handleCloseTicket(interaction, sendVouch) {
-  // Sicherheits-Check: Hat der ausführende User die Support-Rolle?
   if (!interaction.member.roles.cache.has(SUPPORT_ROLE_ID)) {
     return interaction.reply({ 
       content: '❌ Only support staff members can close or cancel tickets!', 
@@ -140,9 +137,8 @@ async function handleCloseTicket(interaction, sendVouch) {
   const [ownerId, productString] = topicData.split('|');
   const finalProduct = productString || 'General Support';
   
-  await interaction.reply({ content: `🔒 Closing this ticket in 5 seconds...` });
+  await interaction.reply({ content: '🔒 Closing this ticket in 5 seconds...' });
   
-  // Wenn der Bot den Vouch senden soll UND eine gültige User-ID im Topic hinterlegt ist
   if (sendVouch && ownerId) {
     const embed = new EmbedBuilder()
       .setColor(0xf5c518)
@@ -156,12 +152,12 @@ async function handleCloseTicket(interaction, sendVouch) {
         { name: '✅ Status', value: 'Completed', inline: true }
       )
       .setThumbnail('https://imgur.com')
-      .setFooter({ text: 'HugoSMP Market • Your opinion matters', iconURL: interaction.guild.iconURL() })
+      .setFooter({ text: 'Chud Hub • Your opinion matters', iconURL: interaction.guild.iconURL() })
       .setTimestamp();
       
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
-        .setCustomId(`vouch_start_${finalProduct}`) // Reicht das Produkt direkt an das Vouch-System weiter
+        .setCustomId(`vouch_start_${finalProduct}`)
         .setLabel('Leave a Vouch')
         .setEmoji('⭐')
         .setStyle(ButtonStyle.Success)
@@ -175,7 +171,9 @@ async function handleCloseTicket(interaction, sendVouch) {
     }
   }
   
-  setTimeout(() => { channel.delete().catch(() => {}); }, 5000);
+  setTimeout(() => { 
+    channel.delete().catch(() => {}); 
+  }, 5000);
 }
 
 // ==================== VOUCH SYSTEM ====================
@@ -234,7 +232,7 @@ async function handleVouchModalSubmit(interaction) {
       { name: '💬 Comment', value: `\`\`\`\n${text}\n\`\`\``, inline: false }
     )
     .setThumbnail(interaction.user.displayAvatarURL({ dynamic: true })) 
-    .setFooter({ text: 'HugoSMP Market • Verified Review', iconURL: interaction.guild.iconURL() })
+    .setFooter({ text: 'Chud Hub • Verified Review', iconURL: interaction.guild.iconURL() })
     .setTimestamp();
     
   const ch = interaction.guild?.channels.cache.get(VOUCH_CHANNEL_ID) 
@@ -295,11 +293,8 @@ client.on('interactionCreate', async (interaction) => {
       }
       
       if (interaction.customId === 'open_ticket_support') return await handleOpenTicket(interaction, 'support');
-      
-      // Weichenstellung für die beiden Schließ-Buttons
       if (interaction.customId === 'close_ticket_vouch') return await handleCloseTicket(interaction, true);
       if (interaction.customId === 'close_ticket_cancel') return await handleCloseTicket(interaction, false);
-      
       if (interaction.customId.startsWith('vouch_start_')) return await handleVouchStartButton(interaction);
     }
     
