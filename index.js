@@ -61,7 +61,7 @@ async function registerCommands() {
 
 // ==================== TICKET LOGIC ====================
 
-async function handleOpenTicket(interaction, ticketType) {
+async function handleOpenTicket(interaction, ticketType, selectedItem = null) {
   const existing = interaction.guild.channels.cache.find(ch => 
     ch.topic === interaction.user.id && ch.parentId === TICKET_CATEGORY_ID
   );
@@ -81,33 +81,21 @@ async function handleOpenTicket(interaction, ticketType) {
     parent: TICKET_CATEGORY_ID, 
     topic: interaction.user.id,
     permissionOverwrites: [
-      { 
-        id: interaction.guild.roles.everyone.id, 
-        deny: [PermissionFlagsBits.ViewChannel] 
-      },
-      { 
-        id: interaction.user.id, 
-        allow: [
-          PermissionFlagsBits.ViewChannel, 
-          PermissionFlagsBits.SendMessages, 
-          PermissionFlagsBits.ReadMessageHistory
-        ] 
-      },
-      { 
-        id: SUPPORT_ROLE_ID, 
-        allow: [
-          PermissionFlagsBits.ViewChannel, 
-          PermissionFlagsBits.SendMessages, 
-          PermissionFlagsBits.ReadMessageHistory
-        ] 
-      },
+      { id: interaction.guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+      { id: interaction.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] },
+      { id: SUPPORT_ROLE_ID, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] },
     ],
   });
 
-  const titleText = ticketType === 'order' ? '🛒 New Order Ticket' : '🎫 New Support Ticket';
-  const descText = ticketType === 'order' 
-    ? `Hi ${interaction.user}, thanks for wanting to place an order!\n\nPlease describe what you would like to buy. Our team will be with you shortly.`
-    : `Hi ${interaction.user}, thanks for reaching out!\n\nPlease describe your issue or question in detail. Our support team will help you shortly.`;
+  let titleText = '🎫 New Support Ticket';
+  let descText = `Hi ${interaction.user}, thanks for reaching out!\n\nPlease describe your issue or question in detail. Our support team will help you shortly.`;
+
+  if (ticketType === 'order') {
+    titleText = '🛒 New Order Ticket';
+    descText = `Hi ${interaction.user}, thanks for wanting to place an order!\n\n` +
+               `**Selected Product:** \`${selectedItem}\`\n\n` +
+               `Our team will assist you with the payment and delivery shortly. Please let us know if you have any questions!`;
+  }
 
   const embed = new EmbedBuilder()
     .setColor(0x2b2d31)
@@ -164,17 +152,11 @@ async function handleCloseTicket(interaction) {
       const user = await client.users.fetch(ownerId); 
       await user.send({ embeds: [embed], components: [row] }); 
     } catch (e) { 
-      await channel.send({ 
-        content: `<@${ownerId}>`, 
-        embeds: [embed], 
-        components: [row] 
-      }).catch(() => {}); 
+      await channel.send({ content: `<@${ownerId}>`, embeds: [embed], components: [row] }).catch(() => {}); 
     }
   }
   
-  setTimeout(() => { 
-    channel.delete().catch(() => {}); 
-  }, 5000);
+  setTimeout(() => { channel.delete().catch(() => {}); }, 5000);
 }
 
 // ==================== VOUCH SYSTEM ====================
@@ -275,15 +257,41 @@ client.on('interactionCreate', async (interaction) => {
     }
     
     if (interaction.isButton()) {
-      if (interaction.customId === 'open_ticket_order') return await handleOpenTicket(interaction, 'order');
+      // Wenn "Place Order" geklickt wird, schicken wir das Dropdown-Auswahlmenü
+      if (interaction.customId === 'open_ticket_order') {
+        const itemRow = new ActionRowBuilder().addComponents(
+          new StringSelectMenuBuilder()
+            .setCustomId('order_item_select')
+            .setPlaceholder('Select the package you want to buy...')
+            .addOptions([
+              { label: 'Boost bundle - £9.99', value: 'Boost bundle (£9.99)' },
+              { label: 'Grind pack - £13.00', value: 'Grind pack (£13.00)' },
+              { label: 'Builder pack - £19.99', value: 'Builder pack (£19.99)' },
+              { label: 'Empire pack - £29.99', value: 'Empire pack (£29.99)' },
+              { label: 'GODMODE PACKAGE - £42.99', value: 'GODMODE PACKAGE (£42.99)' },
+              { label: 'Chud Hub special - £112.31', value: 'Chud Hub special (£112.31)' },
+              { label: '10 modded outfits - £10.00', value: '10 modded outfits (£10.00)' },
+            ])
+        );
+        return await interaction.reply({ content: 'Please select what you would like to order:', components: [itemRow], ephemeral: true });
+      }
+      
       if (interaction.customId === 'open_ticket_support') return await handleOpenTicket(interaction, 'support');
       if (interaction.customId === 'close_ticket') return await handleCloseTicket(interaction);
       if (interaction.customId.startsWith('vouch_start_')) return await handleVouchStartButton(interaction);
     }
     
-    if (interaction.isStringSelectMenu() && interaction.customId.startsWith('vouch_rating_')) {
-      return await handleVouchRatingSelect(interaction);
+    // Verarbeitet die Auswahl aus dem Produkt-Dropdown
+    if (interaction.isStringSelectMenu()) {
+      if (interaction.customId === 'order_item_select') {
+        const selectedProduct = interaction.values[0];
+        return await handleOpenTicket(interaction, 'order', selectedProduct);
+      }
+      if (interaction.customId.startsWith('vouch_rating_')) {
+        return await handleVouchRatingSelect(interaction);
+      }
     }
+    
     if (interaction.isModalSubmit() && interaction.customId.startsWith('vouch_modal_')) {
       return await handleVouchModalSubmit(interaction);
     }
