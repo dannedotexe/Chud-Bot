@@ -149,7 +149,7 @@ async function handleCloseTicket(interaction, sendVouch) {
   if (sendVouch && ownerId) {
     const embed = new EmbedBuilder()
       .setColor(0xf5c518)
-      .setTitle('⭐ Thank you for your support!')
+      .setTitle('Thank you for your support!')
       .setDescription(`Your ticket regarding **${channel.name}** has been successfully closed.\n\nIf you were satisfied, please leave us a quick vouch! 🙏`)
       .addFields(
         { name: '📌 Product', value: `\`${finalProduct}\``, inline: true }, 
