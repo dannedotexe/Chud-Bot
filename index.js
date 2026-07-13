@@ -63,7 +63,7 @@ async function registerCommands() {
 
 async function handleOpenTicket(interaction, ticketType, selectedItem = null) {
   const existing = interaction.guild.channels.cache.find(ch => 
-    ch.topic === interaction.user.id && ch.parentId === TICKET_CATEGORY_ID
+    ch.topic && ch.topic.startsWith(interaction.user.id) && ch.parentId === TICKET_CATEGORY_ID
   );
   
   if (existing) {
@@ -74,12 +74,14 @@ async function handleOpenTicket(interaction, ticketType, selectedItem = null) {
   }
 
   const channelName = `${ticketType}-${interaction.user.username}`.toLowerCase().slice(0, 90);
+  const productString = selectedItem || 'General Support';
 
   const channel = await interaction.guild.channels.create({
     name: channelName,
     type: ChannelType.GuildText, 
     parent: TICKET_CATEGORY_ID, 
-    topic: interaction.user.id,
+    // Wir speichern die User-ID UND das gewählte Produkt im Topic (durch ein | getrennt)
+    topic: `${interaction.user.id}|${productString}`,
     permissionOverwrites: [
       { id: interaction.guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
       { id: interaction.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] },
@@ -93,8 +95,8 @@ async function handleOpenTicket(interaction, ticketType, selectedItem = null) {
   if (ticketType === 'order') {
     titleText = '🛒 New Order Ticket';
     descText = `Hi ${interaction.user}, thanks for wanting to place an order!\n\n` +
-               `**Selected Product:** \`${selectedItem}\`\n\n` +
-               `Our team will assist you with the payment and delivery shortly. Please let us know if you have any questions!`;
+               `**Selected Product:** \`${productString}\`\n\n` +
+               `Our team will assist you with the payment and delivery shortly.`;
   }
 
   const embed = new EmbedBuilder()
@@ -102,12 +104,18 @@ async function handleOpenTicket(interaction, ticketType, selectedItem = null) {
     .setTitle(titleText)
     .setDescription(descText);
     
+  // Zwei Buttons: Einmal mit Vouch-Abfrage, einmal für wortloses Abbrechen
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
-      .setCustomId('close_ticket')
-      .setLabel('Close Ticket')
+      .setCustomId('close_ticket_vouch')
+      .setLabel('Close & Vouch')
       .setEmoji('🔒')
-      .setStyle(ButtonStyle.Danger)
+      .setStyle(ButtonStyle.Danger),
+    new ButtonBuilder()
+      .setCustomId('close_ticket_cancel')
+      .setLabel('Cancel Ticket')
+      .setEmoji('❌')
+      .setStyle(ButtonStyle.Secondary)
   );
 
   await channel.send({ 
@@ -118,23 +126,34 @@ async function handleOpenTicket(interaction, ticketType, selectedItem = null) {
   
   await interaction.reply({ content: `Ticket created: ${channel}`, ephemeral: true });
 }
-async function handleCloseTicket(interaction) {
+async function handleCloseTicket(interaction, sendVouch) {
+  // Sicherheits-Check: Hat der ausführende User die Support-Rolle?
+  if (!interaction.member.roles.cache.has(SUPPORT_ROLE_ID)) {
+    return interaction.reply({ 
+      content: '❌ Only support staff members can close or cancel tickets!', 
+      ephemeral: true 
+    });
+  }
+
   const channel = interaction.channel;
-  const ownerId = channel.topic;
+  const topicData = channel.topic || '';
+  const [ownerId, productString] = topicData.split('|');
+  const finalProduct = productString || 'General Support';
   
-  await interaction.reply({ content: '🔒 Closing this ticket in 5 seconds...' });
+  await interaction.reply({ content: `🔒 Closing this ticket in 5 seconds...` });
   
-  if (ownerId) {
+  // Wenn der Bot den Vouch senden soll UND eine gültige User-ID im Topic hinterlegt ist
+  if (sendVouch && ownerId) {
     const embed = new EmbedBuilder()
       .setColor(0xf5c518)
       .setTitle('⭐ Thank you for your support!')
       .setDescription(
-        `Your ticket **${channel.name}** has been successfully closed.\n\n` +
+        `Your ticket regarding **${channel.name}** has been successfully closed.\n\n` +
         `If you were satisfied with our service, we would highly appreciate it if you could leave us a quick vouch. It helps our marketplace and future customers a lot! 🙏`
       )
       .addFields(
-        { name: '📌 Ticket Reference', value: `\`${channel.name}\``, inline: true },
-        { name: '⏱️ Status', value: 'Completed', inline: true }
+        { name: '📌 Product', value: `\`${finalProduct}\``, inline: true },
+        { name: '✅ Status', value: 'Completed', inline: true }
       )
       .setThumbnail('https://imgur.com')
       .setFooter({ text: 'HugoSMP Market • Your opinion matters', iconURL: interaction.guild.iconURL() })
@@ -142,7 +161,7 @@ async function handleCloseTicket(interaction) {
       
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
-        .setCustomId(`vouch_start_${channel.name}`)
+        .setCustomId(`vouch_start_${finalProduct}`) // Reicht das Produkt direkt an das Vouch-System weiter
         .setLabel('Leave a Vouch')
         .setEmoji('⭐')
         .setStyle(ButtonStyle.Success)
@@ -211,7 +230,7 @@ async function handleVouchModalSubmit(interaction) {
     .addFields(
       { name: '👤 Customer', value: `${interaction.user} (\`${interaction.user.tag}\`)`, inline: false },
       { name: '⭐ Rating', value: `${stars} (\`${rating}/5\`)`, inline: true },
-      { name: '🎫 Ticket', value: `\`${ticketRef || 'N/A'}\``, inline: true },
+      { name: '🛒 Product', value: `\`${ticketRef || 'General Support'}\``, inline: true },
       { name: '💬 Comment', value: `\`\`\`\n${text}\n\`\`\``, inline: false }
     )
     .setThumbnail(interaction.user.displayAvatarURL({ dynamic: true })) 
@@ -257,35 +276,36 @@ client.on('interactionCreate', async (interaction) => {
     }
     
     if (interaction.isButton()) {
-      // Wenn "Place Order" geklickt wird, schicken wir das Dropdown-Auswahlmenü
       if (interaction.customId === 'open_ticket_order') {
         const itemRow = new ActionRowBuilder().addComponents(
           new StringSelectMenuBuilder()
             .setCustomId('order_item_select')
             .setPlaceholder('Select the package you want to buy...')
             .addOptions([
-              { label: 'Boost bundle - £9.99', value: 'Boost bundle (£9.99)' },
-              { label: 'Grind pack - £13.00', value: 'Grind pack (£13.00)' },
-              { label: 'Builder pack - £19.99', value: 'Builder pack (£19.99)' },
-              { label: 'Empire pack - £29.99', value: 'Empire pack (£29.99)' },
-              { label: 'GODMODE PACKAGE - £42.99', value: 'GODMODE PACKAGE (£42.99)' },
-              { label: 'Chud Hub special - £112.31', value: 'Chud Hub special (£112.31)' },
-              { label: '10 modded outfits - £10.00', value: '10 modded outfits (£10.00)' },
+              { label: 'Boost bundle - £9.99', value: 'Boost bundle' },
+              { label: 'Grind pack - £13.00', value: 'Grind pack' },
+              { label: 'Builder pack - £19.99', value: 'Builder pack' },
+              { label: 'Empire pack - £29.99', value: 'Empire pack' },
+              { label: 'GODMODE PACKAGE - £42.99', value: 'GODMODE PACKAGE' },
+              { label: 'Chud Hub special - £112.31', value: 'Chud Hub special' },
+              { label: '10 modded outfits - £10.00', value: '10 modded outfits' },
             ])
         );
         return await interaction.reply({ content: 'Please select what you would like to order:', components: [itemRow], ephemeral: true });
       }
       
       if (interaction.customId === 'open_ticket_support') return await handleOpenTicket(interaction, 'support');
-      if (interaction.customId === 'close_ticket') return await handleCloseTicket(interaction);
+      
+      // Weichenstellung für die beiden Schließ-Buttons
+      if (interaction.customId === 'close_ticket_vouch') return await handleCloseTicket(interaction, true);
+      if (interaction.customId === 'close_ticket_cancel') return await handleCloseTicket(interaction, false);
+      
       if (interaction.customId.startsWith('vouch_start_')) return await handleVouchStartButton(interaction);
     }
     
-    // Verarbeitet die Auswahl aus dem Produkt-Dropdown
     if (interaction.isStringSelectMenu()) {
       if (interaction.customId === 'order_item_select') {
-        const selectedProduct = interaction.values[0];
-        return await handleOpenTicket(interaction, 'order', selectedProduct);
+        return await handleOpenTicket(interaction, 'order', interaction.values[0]);
       }
       if (interaction.customId.startsWith('vouch_rating_')) {
         return await handleVouchRatingSelect(interaction);
