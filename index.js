@@ -73,7 +73,6 @@ async function handleOpenTicket(interaction, ticketType) {
     });
   }
 
-  // Erstellt den Kanalnamen basierend auf dem Typ (order-name oder support-name)
   const channelName = `${ticketType}-${interaction.user.username}`.toLowerCase().slice(0, 90);
 
   const channel = await interaction.guild.channels.create({
@@ -254,7 +253,12 @@ client.on('interactionCreate', async (interaction) => {
           .setEmoji('🎫')
           .setStyle(ButtonStyle.Primary)
       );
-      return await interaction.reply({ embeds: [emb], components: [row] });
+
+      // Sendet das Panel als saubere, eigenständige Kanalnachricht ohne Antwort-Verknüpfung
+      await interaction.channel.send({ embeds: [emb], components: [row] });
+      
+      // Gibt dem Administrator eine unsichtbare Bestätigung, dass das Setup erfolgreich war
+      return await interaction.reply({ content: '✅ Ticket panel successfully setup!', ephemeral: true });
     }
     
     if (interaction.isButton()) {
