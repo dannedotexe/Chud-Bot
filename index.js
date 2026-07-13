@@ -80,7 +80,6 @@ async function handleOpenTicket(interaction, ticketType, selectedItem = null) {
     name: channelName,
     type: ChannelType.GuildText, 
     parent: TICKET_CATEGORY_ID, 
-    // Im Topic steht standardmäßig: UserID | Produkt | (Noch kein Staff)
     topic: `${interaction.user.id}|${productString}|none`,
     permissionOverwrites: [
       { id: interaction.guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
@@ -170,9 +169,16 @@ async function handleVouchModalSubmit(interaction) {
   if (ch) {
     await ch.send({ embeds: [embed] });
     await interaction.reply({ content: 'Your vouch has been successfully posted! Thank you.', ephemeral: true });
+    
     setTimeout(async () => {
-      const upsellEmbed = new EmbedBuilder().setColor(0xe74c3c).setTitle('🛍️ Ready for more?').setDescription(`Thank you again for buying at **Chud Hub**!\n\nIf you want to place another order or browse our packages again, simply open a new ticket using the button below. Our team is always ready to assist you! 🌟`);
-      const upsellRow = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('open_ticket_order').setLabel('Buy Again').setEmoji('🛒').setStyle(ButtonStyle.Danger));
+      const upsellEmbed = new EmbedBuilder().setColor(0xe74c3c).setTitle('🛍️ Ready for more?').setDescription(`Thank you again for buying at **Chud Hub**!\n\nIf you want to place another order or browse our packages again, click the button below to go straight to our ticket channel! Our team is always ready to assist you! 🌟`);
+      const upsellRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setLabel('Buy Again')
+          .setEmoji('🛒')
+          .setStyle(ButtonStyle.Link)
+          .setUrl(`https://discord.com{GUILD_ID}/1523874490768035886`) // HIER DEINE SEITENEIGENE TICKET-KANAL-ID EINTRAGEN
+      );
       await interaction.user.send({ embeds: [upsellEmbed], components: [upsellRow] }).catch(() => {});
     }, 2000);
   } else { await interaction.reply({ content: '❌ Vouch channel could not be found.', ephemeral: true }); }
@@ -217,4 +223,3 @@ client.on('ready', async () => {
 
 client.on('error', console.error);
 client.login(DISCORD_TOKEN);
-
