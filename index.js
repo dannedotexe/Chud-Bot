@@ -155,7 +155,7 @@ async function handleCloseTicket(interaction, sendVouch) {
         { name: '📌 Product', value: `\`${finalProduct}\``, inline: true }, 
         { name: '✅ Status', value: 'Completed', inline: true }
       )
-      .setThumbnail('https://imgur.com')
+      .setThumbnail(interaction.guild.iconURL({ dynamic: true, size: 512 }))
       .setFooter({ text: 'Chud Hub • Your opinion matters', iconURL: interaction.guild.iconURL() })
       .setTimestamp();
       
@@ -164,7 +164,7 @@ async function handleCloseTicket(interaction, sendVouch) {
       new ButtonBuilder()
         .setCustomId(`vouch_start_${hexData}`)
         .setLabel('Leave a Vouch')
-        .setEmoji('1526364588474372258') // HIER bleibt dein cooler, animierter Goldstern auf dem Button!
+        .setEmoji('1526364588474372258')
         .setStyle(ButtonStyle.Success)
     );
     
@@ -187,7 +187,7 @@ async function handleVouchStartButton(interaction) {
       .setCustomId(`vouch_rating_${hexData}`)
       .setPlaceholder('Select a star rating...')
       .addOptions([
-        { label: '⭐ 1 - Very Unsatisfied', value: '1' }, // Zurückgeändert auf normale Sterne
+        { label: '⭐ 1 - Very Unsatisfied', value: '1' }, 
         { label: '⭐⭐ 2 - Poor', value: '2' }, 
         { label: '⭐⭐⭐ 3 - Satisfied', value: '3' }, 
         { label: '⭐⭐⭐⭐ 4 - Very Good', value: '4' }, 
@@ -219,8 +219,8 @@ async function handleVouchRatingSelect(interaction) {
 }
 async function handleVouchModalSubmit(interaction) {
   const parts = interaction.customId.split('_');
-  const rating = parts[3];
-  const hexData = parts[2];
+  const rating = parts;
+  const hexData = parts;
   
   let detectedProduct = 'General Support';
   let detectedStaff = 'Unknown Staff';
@@ -236,14 +236,12 @@ async function handleVouchModalSubmit(interaction) {
   }
   
   const text = interaction.fields.getTextInputValue('vouch_text') || '*No comment left*';
-  
-  // Zurückgeändert auf normale Standard-Sterne für die Bewertung im Kanal
   const stars = '⭐'.repeat(Number(rating || 5));
   const guild = client.guilds.cache.get(GUILD_ID);
   
   const embed = new EmbedBuilder()
     .setColor(0x2ecc71)
-    .setTitle('📥 New Customer Vouch') // Titel wieder clean ohne davor hängenden Text
+    .setTitle('📥 New Customer Vouch')
     .setDescription('A customer has just submitted a new review!')
     .addFields(
       { name: '👤 Customer', value: `${interaction.user} (\`${interaction.user.tag}\`)`, inline: false }, 
@@ -358,4 +356,3 @@ client.on('ready', async () => {
 
 client.on('error', console.error);
 client.login(DISCORD_TOKEN);
-
