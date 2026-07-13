@@ -106,8 +106,8 @@ async function handleOpenTicket(interaction, ticketType) {
 
   const titleText = ticketType === 'order' ? '🛒 New Order Ticket' : '🎫 New Support Ticket';
   const descText = ticketType === 'order' 
-    ? `Hi ${interaction.user}, thanks for wanting to place an order!\n\nPlease describe what you would like to buy.`
-    : `Hi ${interaction.user}, thanks for reaching out!\n\nPlease describe your issue. Our team will help you shortly.`;
+    ? `Hi ${interaction.user}, thanks for wanting to place an order!\n\nPlease describe what you would like to buy. Our team will be with you shortly.`
+    : `Hi ${interaction.user}, thanks for reaching out!\n\nPlease describe your issue or question in detail. Our support team will help you shortly.`;
 
   const embed = new EmbedBuilder()
     .setColor(0x2b2d31)
@@ -130,34 +130,32 @@ async function handleOpenTicket(interaction, ticketType) {
   
   await interaction.reply({ content: `Ticket created: ${channel}`, ephemeral: true });
 }
-
 async function handleCloseTicket(interaction) {
   const channel = interaction.channel;
   const ownerId = channel.topic;
   
-  await interaction.reply({ content: '🔒 Closing in 5 seconds...' });
+  await interaction.reply({ content: '🔒 Closing this ticket in 5 seconds...' });
   
   if (ownerId) {
-    // Verschönertes Vouch-Embed mit strukturierter Anordnung
     const embed = new EmbedBuilder()
       .setColor(0xf5c518)
-      .setTitle('⭐ Vielen Dank für deinen Support!')
+      .setTitle('⭐ Thank you for your support!')
       .setDescription(
-        `Dein Ticket **${channel.name}** wurde soeben erfolgreich geschlossen.\n\n` +
-        `Wenn alles zu deiner Zufriedenheit verlaufen ist, würden wir uns riesig über eine kurze Bewertung freuen. Das hilft unserem Marktplatz und neuen Kunden sehr! 🙏`
+        `Your ticket **${channel.name}** has been successfully closed.\n\n` +
+        `If you were satisfied with our service, we would highly appreciate it if you could leave us a quick vouch. It helps our marketplace and future customers a lot! 🙏`
       )
       .addFields(
-        { name: '📌 Ticket-Referenz', value: `\`${channel.name}\``, inline: true },
-        { name: '⏱️ Dauer', value: 'Abgeschlossen', inline: true }
+        { name: '📌 Ticket Reference', value: `\`${channel.name}\``, inline: true },
+        { name: '⏱️ Status', value: 'Completed', inline: true }
       )
-      .setThumbnail('https://imgur.com') // Ein schönes Standard-Stern-Icon als Thumbnail
-      .setFooter({ text: 'HugoSMP Market • Deine Meinung zählt', iconURL: interaction.guild.iconURL() })
+      .setThumbnail('https://imgur.com')
+      .setFooter({ text: 'HugoSMP Market • Your opinion matters', iconURL: interaction.guild.iconURL() })
       .setTimestamp();
       
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId(`vouch_start_${channel.name}`)
-        .setLabel('Bewertung abgeben')
+        .setLabel('Leave a Vouch')
         .setEmoji('⭐')
         .setStyle(ButtonStyle.Success)
     );
@@ -186,30 +184,30 @@ async function handleVouchStartButton(interaction) {
   const row = new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
       .setCustomId(`vouch_rating_${ref}`)
-      .setPlaceholder('Wähle eine Sterneanzahl...')
+      .setPlaceholder('Select a star rating...')
       .addOptions([
-        { label: '⭐ 1 - Sehr unzufrieden', value: '1' }, 
-        { label: '⭐⭐ 2 - Mangelhaft', value: '2' }, 
-        { label: '⭐⭐⭐ 3 - Zufriedenstellend', value: '3' }, 
-        { label: '⭐⭐⭐⭐ 4 - Sehr gut', value: '4' }, 
-        { label: '⭐⭐⭐⭐⭐ 5 - Perfekter Service!', value: '5' }
+        { label: '⭐ 1 - Very Unsatisfied', value: '1' }, 
+        { label: '⭐⭐ 2 - Poor', value: '2' }, 
+        { label: '⭐⭐⭐ 3 - Satisfied', value: '3' }, 
+        { label: '⭐⭐⭐⭐ 4 - Very Good', value: '4' }, 
+        { label: '⭐⭐⭐⭐⭐ 5 - Perfect Service!', value: '5' }
       ])
   );
-  await interaction.reply({ content: 'Wie viele Sterne möchtest du uns geben?', components: [row], ephemeral: true });
+  await interaction.reply({ content: 'How many stars would you like to give us?', components: [row], ephemeral: true });
 }
 
 async function handleVouchRatingSelect(interaction) {
   const ref = interaction.customId.replace('vouch_rating_', '');
   const modal = new ModalBuilder()
     .setCustomId(`vouch_modal_${ref}_${interaction.values}`)
-    .setTitle('Bewertung absenden');
+    .setTitle('Submit Your Vouch');
     
   modal.addComponents(
     new ActionRowBuilder().addComponents(
       new TextInputBuilder()
         .setCustomId('vouch_text')
-        .setLabel('Dein Feedback (Optional)')
-        .setPlaceholder('z.B. Super schnelle Lieferung, sehr freundlicher Support!')
+        .setLabel('Your Experience (Optional)')
+        .setPlaceholder('e.g., Super fast delivery, very friendly support team!')
         .setStyle(TextInputStyle.Paragraph)
         .setRequired(false)
     )
@@ -220,16 +218,22 @@ async function handleVouchRatingSelect(interaction) {
 async function handleVouchModalSubmit(interaction) {
   const parts = interaction.customId.split('_');
   const rating = parts.pop();
-  const text = interaction.fields.getTextInputValue('vouch_text') || '*Kein Kommentar hinterlassen*';
-  
+  const ticketRef = parts.slice(2).join('_');
+  const text = interaction.fields.getTextInputValue('vouch_text') || '*No comment left*';
+  const stars = '⭐'.repeat(Number(rating));
+
   const embed = new EmbedBuilder()
-    .setColor(0xf5c518)
-    .setAuthor({ 
-      name: interaction.user.tag, 
-      iconURL: interaction.user.displayAvatarURL() 
-    })
-    .setTitle('Neues Vouch erhalten! ⭐')
-    .setDescription(`**Sterne:** ${'⭐'.repeat(Number(rating))}\n\n**Erfahrung:**\n${text}`)
+    .setColor(0x2ecc71) 
+    .setTitle('📥 New Customer Vouch')
+    .setDescription('A customer has just submitted a new review for their recent experience!')
+    .addFields(
+      { name: '👤 Customer', value: `${interaction.user} (\`${interaction.user.tag}\`)`, inline: false },
+      { name: '⭐ Rating', value: `${stars} (\`${rating}/5\`)`, inline: true },
+      { name: '🎫 Ticket', value: `\`${ticketRef || 'N/A'}\``, inline: true },
+      { name: '💬 Comment', value: `\`\`\`\n${text}\n\`\`\``, inline: false }
+    )
+    .setThumbnail(interaction.user.displayAvatarURL({ dynamic: true })) 
+    .setFooter({ text: 'HugoSMP Market • Verified Review', iconURL: interaction.guild.iconURL() })
     .setTimestamp();
     
   const ch = interaction.guild?.channels.cache.get(VOUCH_CHANNEL_ID) 
@@ -237,9 +241,9 @@ async function handleVouchModalSubmit(interaction) {
     
   if (ch) { 
     await ch.send({ embeds: [embed] }); 
-    await interaction.reply({ content: 'Deine Bewertung wurde erfolgreich gepostet! Vielen Dank.', ephemeral: true }); 
+    await interaction.reply({ content: 'Your vouch has been successfully posted! Thank you.', ephemeral: true }); 
   } else { 
-    await interaction.reply({ content: '❌ Bewertungschannel wurde nicht gefunden.', ephemeral: true }); 
+    await interaction.reply({ content: '❌ Vouch channel could not be found.', ephemeral: true }); 
   }
 }
 
@@ -251,7 +255,7 @@ client.on('interactionCreate', async (interaction) => {
       const emb = new EmbedBuilder()
         .setColor(0x2b2d31)
         .setTitle('🎫 Tickets & Orders')
-        .setDescription('Need help or want to buy something? Choose the right option below to open a ticket.');
+        .setDescription('Need help or want to buy something? Choose the right option below to open a private ticket.');
         
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
@@ -280,7 +284,6 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.isStringSelectMenu() && interaction.customId.startsWith('vouch_rating_')) {
       return await handleVouchRatingSelect(interaction);
     }
-    
     if (interaction.isModalSubmit() && interaction.customId.startsWith('vouch_modal_')) {
       return await handleVouchModalSubmit(interaction);
     }
