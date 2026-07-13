@@ -16,7 +16,8 @@ const {
   TextInputBuilder, 
   TextInputStyle, 
   StringSelectMenuBuilder, 
-  EmbedBuilder 
+  EmbedBuilder,
+  ActivityType // Hinzugefügt für saubere Aktivitäts-Zuweisung
 } = require('discord.js');
 
 const { 
@@ -61,6 +62,7 @@ async function registerCommands() {
 // ==================== TICKET LOGIC ====================
 
 async function handleOpenTicket(interaction, ticketType, selectedItem = null) {
+  // Verhindert doppelte Tickets
   const existing = interaction.guild.channels.cache.find(ch => 
     ch.topic && ch.topic.startsWith(interaction.user.id) && ch.parentId === TICKET_CATEGORY_ID
   );
@@ -69,20 +71,9 @@ async function handleOpenTicket(interaction, ticketType, selectedItem = null) {
     return interaction.reply({ content: `You already have an open ticket: ${existing}`, ephemeral: true });
   }
 
-  const categoryChannel = interaction.guild.channels.cache.get(TICKET_CATEGORY_ID);
-  let ticketNumber = 1;
-
-  if (categoryChannel && categoryChannel.type === ChannelType.GuildCategory) {
-    const categoryName = categoryChannel.name;
-    const match = categoryName.match(/\d+$/);
-    if (match) {
-      ticketNumber = parseInt(match[0], 10) + 1;
-    } else {
-      ticketNumber = interaction.guild.channels.cache.filter(ch => ch.parentId === TICKET_CATEGORY_ID).size + 1;
-    }
-    const cleanCategoryName = categoryName.replace(/\s*\d+$/, '');
-    await categoryChannel.setName(`${cleanCategoryName} ${ticketNumber}`).catch(() => {});
-  }
+  // Sicherer Ticket-Zähler ohne die Kategorie umzubennen (Vermeidet Rate-Limits!)
+  const ticketsCount = interaction.guild.channels.cache.filter(ch => ch.parentId === TICKET_CATEGORY_ID).size;
+  const ticketNumber = String(ticketsCount + 1).padStart(4, '0');
 
   const channelName = `${ticketType}-${ticketNumber}-${interaction.user.username}`.toLowerCase().slice(0, 90);
   const productString = selectedItem || 'General Support';
@@ -116,7 +107,8 @@ async function handleOpenTicket(interaction, ticketType, selectedItem = null) {
   await channel.send({ content: `${interaction.user} | <@&${SUPPORT_ROLE_ID}>`, embeds: [embed], components: [row] });
   await interaction.reply({ content: `Ticket created: ${channel}`, ephemeral: true });
 }
-// Globale Zwischenspeicherung im RAM, um den Fehler mit IDs mit Leerzeichen komplett zu umgehen
+
+// Globale Zwischenspeicherung im RAM
 const vouchCache = new Map();
 
 async function handleCloseTicket(interaction, sendVouch) {
@@ -144,7 +136,6 @@ async function handleCloseTicket(interaction, sendVouch) {
       .setFooter({ text: 'Chud Hub • Your opinion matters', iconURL: interaction.guild.iconURL() })
       .setTimestamp();
 
-    // Generiert eine absolut sichere, kurze Zufalls-ID für den Cache
     const sessionID = Math.random().toString(36).substring(2, 10);
     vouchCache.set(sessionID, { product: finalProduct, staff: staffId });
       
@@ -152,7 +143,6 @@ async function handleCloseTicket(interaction, sendVouch) {
       new ButtonBuilder()
         .setCustomId(`vstart-${sessionID}`)
         .setLabel('Leave a Vouch')
-        .setEmoji('1526364588474372258')
         .setStyle(ButtonStyle.Success)
     );
     
@@ -205,14 +195,14 @@ async function handleVouchRatingSelect(interaction) {
   );
   await interaction.showModal(modal);
 }
+
 async function handleVouchModalSubmit(interaction) {
   const parts = interaction.customId.replace('vmodal-', '').split('-');
   const sessionID = parts[0];
   const rating = parts[1];
   
-  // Ruft die echten, unbeschädigten Daten aus dem Cache ab
   const cachedData = vouchCache.get(sessionID) || { product: 'General Support', staff: 'none' };
-  vouchCache.delete(sessionID); // Bereinigt den RAM-Speicher
+  vouchCache.delete(sessionID); 
 
   const text = interaction.fields.getTextInputValue('vouch_text') || '*No comment left*';
   const stars = '⭐'.repeat(Number(rating || 5));
@@ -251,13 +241,18 @@ async function handleVouchModalSubmit(interaction) {
     }
 
     setTimeout(async () => {
-      const upsellEmbed = new EmbedBuilder().setColor(0xe74c3c).setTitle('🛍️ Ready for more?').setDescription(`Thank you again for buying at **Chud Hub**!\n\nIf you want to place another order or browse our packages again, click the button below to go straight to our ticket channel! Our team is always ready to assist you! 🌟`);
+      const upsellEmbed = new EmbedBuilder()
+        .setColor(0xe74c3c)
+        .setTitle('🛍️ Ready for more?')
+        .setDescription(`Thank you again for buying at **Chud Hub**!\n\nIf you want to place another order or browse our packages again, click the button below to go straight to our ticket channel!`);
+      
+      // Korrigierter Discord-Link:
       const upsellRow = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
           .setLabel('Buy Again')
           .setEmoji('🛒')
           .setStyle(ButtonStyle.Link)
-          .setUrl(`https://discord.com{GUILD_ID}/${TICKET_PANEL_CHANNEL_ID || '0'}`)
+          .setUrl(`https://discord.com/channels/${GUILD_ID}/${TICKET_PANEL_CHANNEL_ID || '0'}`)
       );
       await interaction.user.send({ embeds: [upsellEmbed], components: [upsellRow] }).catch(() => {});
     }, 2000);
@@ -303,7 +298,8 @@ client.on('interactionCreate', async (interaction) => {
     }
     
     if (interaction.isStringSelectMenu()) {
-      if (interaction.customId === 'order_item_select') return await handleOpenTicket(interaction, 'order', interaction.values);
+      // interaction.values[0] statt des gesamten Arrays übergeben!
+      if (interaction.customId === 'order_item_select') return await handleOpenTicket(interaction, 'order', interaction.values[0]);
       if (interaction.customId.startsWith('vrating-')) return await handleVouchRatingSelect(interaction);
     }
     if (interaction.isModalSubmit() && interaction.customId.startsWith('vmodal-')) return await handleVouchModalSubmit(interaction);
@@ -314,10 +310,12 @@ client.on('ready', async () => {
   console.log(`🤖 Online as ${client.user.tag}`);
   const statuses = ['at Chud Hub! Ready for your next package? 🛒', 'with custom bundles! Open a ticket now 🎫', 'to help you! Open an order ticket ✨'];
   let counter = 0; 
-  client.user.setActivity(statuses[counter], { type: 0 });
+  
+  // Saubere Zuweisung mit ActivityType.Playing
+  client.user.setActivity(statuses[counter], { type: ActivityType.Playing });
   setInterval(() => { 
     counter = (counter + 1) % statuses.length; 
-    client.user.setActivity(statuses[counter], { type: 0 }); 
+    client.user.setActivity(statuses[counter], { type: ActivityType.Playing }); 
   }, 60000);
   await registerCommands();
 });
