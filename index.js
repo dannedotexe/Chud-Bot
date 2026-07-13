@@ -160,7 +160,7 @@ async function handleCloseTicket(interaction, sendVouch) {
       new ButtonBuilder()
         .setCustomId(`vstart-${sessionID}`)
         .setLabel('Leave a Vouch')
-        // KORREKTES FORMAT: Custom-Emoji wird als Objekt mit ID übergeben, damit Discord es laden kann!
+        // Custom-Emoji als Objekt übergeben
         .setEmoji({ id: '1526364588474372258' })
         .setStyle(ButtonStyle.Success)
     );
@@ -256,11 +256,18 @@ async function handleVouchModalSubmit(interaction) {
         if (member && !member.roles.cache.has(CUSTOMER_ROLE_ID)) {
           await member.roles.add(CUSTOMER_ROLE_ID);
         }
-      } catch (err) { console.error('Role error:', err); }
+      } catch (err) { console.error('❌ Rollenfehler:', err); }
     }
 
-    // "Buy Again" nach 2 Sekunden senden (Sicher vor URL-Abstürzen & DM-Blockaden)
+    // "Buy Again" nach 2 Sekunden senden (mit detaillierter Fehlerausgabe im Terminal)
     setTimeout(async () => {
+      if (!GUILD_ID || !TICKET_PANEL_CHANNEL_ID) {
+        console.warn("⚠️ Warnung: GUILD_ID oder TICKET_PANEL_CHANNEL_ID fehlt in der .env!");
+      }
+
+      const channelLink = `https://discord.com/channels/${GUILD_ID}/${TICKET_PANEL_CHANNEL_ID || '0'}`;
+      console.log(`🔗 Versuche 'Buy Again' zu senden mit URL: ${channelLink}`);
+
       const upsellEmbed = new EmbedBuilder()
         .setColor(0xe74c3c)
         .setTitle('🛍️ Ready for more?')
@@ -271,19 +278,25 @@ async function handleVouchModalSubmit(interaction) {
           .setLabel('Buy Again')
           .setEmoji('🛒')
           .setStyle(ButtonStyle.Link)
-          // KORREKT: Saubere URL mit /channels/ und korrektem Template-Literal $ vor GUILD_ID
-          .setUrl(`https://discord.com/channels/${GUILD_ID}/${TICKET_PANEL_CHANNEL_ID || '0'}`)
+          .setUrl(channelLink)
       );
       
       try {
         await interaction.user.send({ embeds: [upsellEmbed], components: [upsellRow] });
+        console.log("✅ 'Buy Again' wurde erfolgreich per DM gesendet.");
       } catch (dmError) {
-        // Fallback: Postet die Nachricht flüchtig direkt im Kanal, falls der User DMs deaktiviert hat
+        console.error("❌ DM gescheitert. Grund:", dmError.message, "- Versuche Fallback im Chat...");
+        
+        // Versuche das Fallback im Kanal
         await interaction.followUp({ 
           embeds: [upsellEmbed], 
           components: [upsellRow], 
           ephemeral: true 
-        }).catch(() => {});
+        }).then(() => {
+          console.log("✅ 'Buy Again' wurde erfolgreich als flüchtiges Followup im Kanal gepostet.");
+        }).catch((followUpError) => {
+          console.error("❌ Fallback im Kanal ist ebenfalls gescheitert! Grund:", followUpError.message);
+        });
       }
     }, 2000);
 
