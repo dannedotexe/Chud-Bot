@@ -1,4 +1,6 @@
 require('dotenv').config();
+const fs = require('fs');
+const path = require('path');
 
 const { 
   Client, 
@@ -42,6 +44,24 @@ const client = new Client({
 
 // Globale Zwischenspeicherung im RAM
 const vouchCache = new Map();
+const counterFilePath = path.join(__dirname, 'counter.json');
+
+// ==================== COUNTER SYSTEM (OPTION A) ====================
+
+function getNextTicketNumber() {
+  try {
+    if (!fs.existsSync(counterFilePath)) {
+      fs.writeFileSync(counterFilePath, JSON.stringify({ lastTicketNumber: 0 }));
+    }
+    const data = JSON.parse(fs.readFileSync(counterFilePath, 'utf8'));
+    data.lastTicketNumber += 1;
+    fs.writeFileSync(counterFilePath, JSON.stringify(data, null, 2));
+    return data.lastTicketNumber;
+  } catch (error) {
+    console.error("❌ Fehler beim Lesen/Schreiben des Ticket-Zählers:", error);
+    return Math.floor(Math.random() * 1000); // Sicherheits-Fallback
+  }
+}
 
 // ==================== COMMAND REGISTRATION ====================
 
@@ -74,25 +94,8 @@ async function handleOpenTicket(interaction, ticketType, selectedItem = null) {
     return interaction.reply({ content: `You already have an open ticket: ${existing}`, ephemeral: true });
   }
 
-  // Holt alle Kanäle aus der Kategorie & ermittelt die höchste Nummer
-  const categoryChannels = interaction.guild.channels.cache.filter(ch => ch.parentId === TICKET_CATEGORY_ID);
-  
-  let maxNumber = 0;
-  
-  categoryChannels.forEach(ch => {
-    const parts = ch.name.split('-');
-    // Sucht nach dem Teil im Namen, der nur aus Zahlen besteht (die Ticketnummer)
-    const numPart = parts.find(part => /^\d+$/.test(part));
-    if (numPart) {
-      const num = parseInt(numPart, 10);
-      if (num > maxNumber) {
-        maxNumber = num;
-      }
-    }
-  });
-
-  // Die neue Ticketnummer ist die höchste gefundene Nummer + 1 (zählt auch nach Löschungen richtig weiter)
-  const nextTicketNum = maxNumber + 1;
+  // Holt die fortlaufende Ticketnummer aus der counter.json-Datei
+  const nextTicketNum = getNextTicketNumber();
   const ticketNumber = String(nextTicketNum).padStart(4, '0');
 
   const channelName = `${ticketType}-${ticketNumber}-${interaction.user.username}`.toLowerCase().slice(0, 90);
@@ -160,7 +163,6 @@ async function handleCloseTicket(interaction, sendVouch) {
       new ButtonBuilder()
         .setCustomId(`vstart-${sessionID}`)
         .setLabel('Leave a Vouch')
-        // Custom-Emoji als Objekt übergeben (Kein Absturz)
         .setEmoji({ id: '1526364588474372258' })
         .setStyle(ButtonStyle.Success)
     );
@@ -273,7 +275,7 @@ async function handleVouchModalSubmit(interaction) {
         .setTitle('🛍️ Ready for more?')
         .setDescription(`Thank you again for buying at **Chud Hub**!\n\nIf you want to place another order or browse our packages again, click the button below to go straight to our ticket channel! Our team is always ready to assist you! 🌟`);
       
-      // Fehlerfreier ButtonBuilder ohne Custom ID und direkter Link-Zuweisung
+      // Fehlerfreier Link-Button ohne Custom ID (Behebt den TypeError)
       const buyAgainBtn = new ButtonBuilder()
         .setLabel('Buy Again')
         .setEmoji('🛒')
