@@ -48,6 +48,7 @@ const vouchCache = new Map();
 // Pfad zum permanenten Volume-Ordner auf Railway
 const volumeDirectory = '/app/data';
 const counterFilePath = path.join(volumeDirectory, 'counter.json');
+const statsFilePath = path.join(volumeDirectory, 'stats.json');
 
 // ==================== COUNTER SYSTEM (MIT VOLUME) ====================
 
@@ -75,7 +76,49 @@ function getNextTicketNumber() {
   }
 }
 
-// ==================== COMMAND REGISTRATION ====================
+// ==================== STATS SYSTEM (VOUCH LEADERBOARD) ====================
+
+function loadStats() {
+  try {
+    if (!fs.existsSync(volumeDirectory)) {
+      fs.mkdirSync(volumeDirectory, { recursive: true });
+    }
+    if (!fs.existsSync(statsFilePath)) {
+      fs.writeFileSync(statsFilePath, JSON.stringify({ staff: {} }, null, 2));
+    }
+    const data = JSON.parse(fs.readFileSync(statsFilePath, 'utf8'));
+    data.staff = data.staff || {};
+    return data;
+  } catch (error) {
+    console.error("❌ Error reading stats file:", error);
+    return { staff: {} };
+  }
+}
+
+function saveStats(data) {
+  try {
+    fs.writeFileSync(statsFilePath, JSON.stringify(data, null, 2));
+  } catch (error) {
+    console.error("❌ Error writing stats file:", error);
+  }
+}
+
+// Wird nach jedem erfolgreich geposteten Vouch aufgerufen
+function recordVouch(staffId, rating) {
+  if (!staffId || staffId === 'none') return;
+
+  const data = loadStats();
+  if (!data.staff[staffId]) {
+    data.staff[staffId] = { vouches: 0, totalStars: 0 };
+  }
+
+  data.staff[staffId].vouches += 1;
+  data.staff[staffId].totalStars += Number(rating) || 0;
+
+  saveStats(data);
+}
+
+
 
 async function registerCommands() {
   const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
@@ -85,6 +128,10 @@ async function registerCommands() {
         .setName('setup-tickets')
         .setDescription('Posts the ticket panel')
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+        .toJSON(),
+      new SlashCommandBuilder()
+        .setName('leaderboard')
+        .setDescription('Shows the top support staff by vouches received')
         .toJSON()
     ];
     await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
@@ -99,7 +146,7 @@ async function registerCommands() {
 async function handleOpenTicket(interaction, ticketType, selectedItem = null) {
   // Verhindert doppelte geöffnete Tickets desselben Users in dieser Kategorie
   const existing = interaction.guild.channels.cache.find(ch => 
-    ch.topic && ch.topic.startsWith(interaction.user.id) && ch.parentId === TICKET_CATEGORY_ID
+    ch.topic && ch.topic.split('|')[0] === interaction.user.id && ch.parentId === TICKET_CATEGORY_ID
   );
   
   if (existing) {
@@ -169,7 +216,8 @@ async function handleCloseTicket(interaction, sendVouch) {
       .setTimestamp();
 
     const sessionID = Math.random().toString(36).substring(2, 10);
-    vouchCache.set(sessionID, { product: finalProduct, staff: staffId, used: false });
+    // staff wird standardmäßig auf den Schließer gesetzt, der Kunde kann das aber überschreiben
+    vouchCache.set(sessionID, { product: finalProduct, staff: staffId, rating: null, used: false });
       
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
@@ -190,6 +238,28 @@ async function handleCloseTicket(interaction, sendVouch) {
 }
 
 // ==================== VOUCH SYSTEM ====================
+
+// Holt alle Member mit der Support-Rolle für das Auswahlmenü
+async function getSupportStaffOptions(guild) {
+  if (!guild) return [];
+
+  try {
+    // Stellt sicher, dass der Member-Cache vollständig ist, bevor wir filtern
+    if (guild.members.cache.size < guild.memberCount) {
+      await guild.members.fetch().catch(() => {});
+    }
+  } catch (e) {
+    console.error('❌ Fehler beim Laden der Member:', e.message);
+  }
+
+  const role = guild.roles.cache.get(SUPPORT_ROLE_ID);
+  if (!role) return [];
+
+  return role.members.map(member => ({
+    label: member.displayName.slice(0, 100),
+    value: member.id
+  })).slice(0, 24); // Discord erlaubt max. 25 Optionen — 1 Platz für "Unbekannt" freihalten
+}
 
 async function handleVouchStartButton(interaction) {
   const sessionID = interaction.customId.replace('vstart-', '');
@@ -229,9 +299,61 @@ async function handleVouchRatingSelect(interaction) {
       ephemeral: true 
     });
   }
-  
+
+  // Rating merken, bevor wir zum nächsten Schritt gehen
+  cachedData.rating = rating;
+  vouchCache.set(sessionID, cachedData);
+
+  const guild = client.guilds.cache.get(GUILD_ID);
+  const staffOptions = await getSupportStaffOptions(guild);
+
+  // Falls aus irgendeinem Grund keine Support-Member gefunden werden, überspringen wir
+  // diesen Schritt und behalten den Schließer als Handled-By-Wert (siehe handleCloseTicket)
+  if (staffOptions.length === 0) {
+    const modal = new ModalBuilder()
+      .setCustomId(`vmodal-${sessionID}`)
+      .setTitle('Submit Your Vouch');
+
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('vouch_text')
+          .setLabel('Your Experience (Optional)')
+          .setPlaceholder('e.g., Super fast delivery!')
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(false)
+      )
+    );
+    return await interaction.showModal(modal);
+  }
+
+  const row = new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId(`vstaff-${sessionID}`)
+      .setPlaceholder('Welcher Supporter hat dir geholfen?')
+      .addOptions(staffOptions)
+  );
+
+  await interaction.reply({ content: 'Wer aus unserem Team hat dich betreut?', components: [row], ephemeral: true });
+}
+
+async function handleVouchStaffSelect(interaction) {
+  const sessionID = interaction.customId.replace('vstaff-', '');
+  const chosenStaff = interaction.values[0];
+  const cachedData = vouchCache.get(sessionID);
+
+  if (!cachedData || cachedData.used) {
+    return interaction.reply({ 
+      content: '❌ This vouch session is no longer active or has already been used.', 
+      ephemeral: true 
+    });
+  }
+
+  cachedData.staff = chosenStaff;
+  vouchCache.set(sessionID, cachedData);
+
   const modal = new ModalBuilder()
-    .setCustomId(`vmodal-${sessionID}-${rating}`)
+    .setCustomId(`vmodal-${sessionID}`)
     .setTitle('Submit Your Vouch');
     
   modal.addComponents(
@@ -248,10 +370,7 @@ async function handleVouchRatingSelect(interaction) {
 }
 
 async function handleVouchModalSubmit(interaction) {
-  const parts = interaction.customId.replace('vmodal-', '').split('-');
-  const sessionID = parts[0];
-  const rating = parts[1];
-  
+  const sessionID = interaction.customId.replace('vmodal-', '');
   const cachedData = vouchCache.get(sessionID);
 
   if (!cachedData || cachedData.used) {
@@ -266,6 +385,7 @@ async function handleVouchModalSubmit(interaction) {
   vouchCache.set(sessionID, cachedData);
 
   const finalProduct = cachedData.product || 'General Support';
+  const rating = cachedData.rating || '5';
   const staffId = cachedData.staff || 'none';
 
   // Lösche den Cache-Eintrag komplett nach erfolgreicher Verarbeitung
@@ -296,6 +416,7 @@ async function handleVouchModalSubmit(interaction) {
   const ch = guild?.channels.cache.get(VOUCH_CHANNEL_ID) || await client.channels.fetch(VOUCH_CHANNEL_ID).catch(() => null);
   if (ch) {
     await ch.send({ embeds: [embed] });
+    recordVouch(staffId, rating);
     await interaction.reply({ content: 'Your vouch has been successfully posted! Thank you.', ephemeral: true });
     
     if (guild && CUSTOMER_ROLE_ID) {
@@ -354,6 +475,41 @@ async function handleVouchModalSubmit(interaction) {
   }
 }
 
+// ==================== LEADERBOARD ====================
+
+async function handleLeaderboardCommand(interaction) {
+  const data = loadStats();
+  const entries = Object.entries(data.staff)
+    .map(([staffId, s]) => ({
+      staffId,
+      vouches: s.vouches || 0,
+      avgRating: s.vouches > 0 ? s.totalStars / s.vouches : 0
+    }))
+    .filter(e => e.vouches > 0)
+    .sort((a, b) => b.vouches - a.vouches || b.avgRating - a.avgRating)
+    .slice(0, 10);
+
+  if (entries.length === 0) {
+    return interaction.reply({ content: '📊 No vouches have been recorded yet.', ephemeral: true });
+  }
+
+  const medals = ['🥇', '🥈', '🥉'];
+  const lines = entries.map((e, i) => {
+    const rank = medals[i] || `#${i + 1}`;
+    const stars = e.avgRating.toFixed(1);
+    return `${rank} <@${e.staffId}> — **${e.vouches}** vouch${e.vouches === 1 ? '' : 'es'} (⭐ ${stars} avg)`;
+  });
+
+  const embed = new EmbedBuilder()
+    .setColor(0xf5c518)
+    .setTitle('🏆 Support Leaderboard')
+    .setDescription(lines.join('\n'))
+    .setFooter({ text: 'Chud Hub • Based on customer vouches', iconURL: interaction.guild?.iconURL() || null })
+    .setTimestamp();
+
+  return interaction.reply({ embeds: [embed] });
+}
+
 // ==================== EVENTS ====================
 
 client.on('interactionCreate', async (interaction) => {
@@ -370,6 +526,10 @@ client.on('interactionCreate', async (interaction) => {
       
       await interaction.channel.send({ embeds: [emb], components: [row] });
       return await interaction.reply({ content: '✅ Ticket panel successfully setup!', ephemeral: true });
+    }
+
+    if (interaction.isChatInputCommand() && interaction.commandName === 'leaderboard') {
+      return await handleLeaderboardCommand(interaction);
     }
     
     if (interaction.isButton()) {
@@ -397,6 +557,7 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.isStringSelectMenu()) {
       if (interaction.customId === 'order_item_select') return await handleOpenTicket(interaction, 'order', interaction.values[0]);
       if (interaction.customId.startsWith('vrating-')) return await handleVouchRatingSelect(interaction);
+      if (interaction.customId.startsWith('vstaff-')) return await handleVouchStaffSelect(interaction);
     }
     if (interaction.isModalSubmit() && interaction.customId.startsWith('vmodal-')) return await handleVouchModalSubmit(interaction);
   } catch (err) { console.error(err); }
