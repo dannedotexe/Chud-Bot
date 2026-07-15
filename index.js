@@ -42,24 +42,24 @@ const client = new Client({
   partials: [Partials.Channel],
 });
 
-// Globale Zwischenspeicherung im RAM
+// Global in-memory cache
 const vouchCache = new Map();
 
-// Pfad zum permanenten Volume-Ordner auf Railway
+// Path to the persistent volume folder on Railway
 const volumeDirectory = '/app/data';
 const counterFilePath = path.join(volumeDirectory, 'counter.json');
 const statsFilePath = path.join(volumeDirectory, 'stats.json');
 
-// ==================== COUNTER SYSTEM (MIT VOLUME) ====================
+// ==================== COUNTER SYSTEM (WITH VOLUME) ====================
 
 function getNextTicketNumber() {
   try {
-    // Überprüfen, ob der Volume-Ordner existiert (falls lokal getestet wird, wird er erstellt)
+    // Check if the volume folder exists (created automatically when testing locally)
     if (!fs.existsSync(volumeDirectory)) {
       fs.mkdirSync(volumeDirectory, { recursive: true });
     }
 
-    // Wenn die Zähler-Datei noch nicht existiert, erstellen wir sie mit dem Startwert 0
+    // If the counter file doesn't exist yet, create it with a starting value of 0
     if (!fs.existsSync(counterFilePath)) {
       fs.writeFileSync(counterFilePath, JSON.stringify({ lastTicketNumber: 0 }));
     }
@@ -67,12 +67,12 @@ function getNextTicketNumber() {
     const data = JSON.parse(fs.readFileSync(counterFilePath, 'utf8'));
     data.lastTicketNumber += 1;
     
-    // Neue Ticketnummer im persistenten Volume speichern
+    // Save the new ticket number in the persistent volume
     fs.writeFileSync(counterFilePath, JSON.stringify(data, null, 2));
     return data.lastTicketNumber;
   } catch (error) {
-    console.error("❌ Fehler beim Lesen/Schreiben im Volume Zähler:", error);
-    return Math.floor(Math.random() * 1000); // Sicherheits-Fallback
+    console.error("❌ Error reading/writing the volume counter:", error);
+    return Math.floor(Math.random() * 1000); // Safety fallback
   }
 }
 
@@ -103,7 +103,7 @@ function saveStats(data) {
   }
 }
 
-// Wird nach jedem erfolgreich geposteten Vouch aufgerufen
+// Called after every successfully posted vouch
 function recordVouch(staffId, rating) {
   if (!staffId || staffId === 'none') return;
 
@@ -144,7 +144,7 @@ async function registerCommands() {
 // ==================== TICKET LOGIC ====================
 
 async function handleOpenTicket(interaction, ticketType, selectedItem = null) {
-  // Verhindert doppelte geöffnete Tickets desselben Users in dieser Kategorie
+  // Prevents the same user from having multiple open tickets in this category
   const existing = interaction.guild.channels.cache.find(ch => 
     ch.topic && ch.topic.split('|')[0] === interaction.user.id && ch.parentId === TICKET_CATEGORY_ID
   );
@@ -153,7 +153,7 @@ async function handleOpenTicket(interaction, ticketType, selectedItem = null) {
     return interaction.reply({ content: `You already have an open ticket: ${existing}`, ephemeral: true });
   }
 
-  // Holt die fortlaufende Ticketnummer aus dem permanenten Volume
+  // Gets the running ticket number from the persistent volume
   const nextTicketNum = getNextTicketNumber();
   const ticketNumber = String(nextTicketNum).padStart(4, '0');
 
@@ -216,7 +216,7 @@ async function handleCloseTicket(interaction, sendVouch) {
       .setTimestamp();
 
     const sessionID = Math.random().toString(36).substring(2, 10);
-    // staff wird standardmäßig auf den Schließer gesetzt, der Kunde kann das aber überschreiben
+    // staff defaults to the closer, but the customer can override this
     vouchCache.set(sessionID, { product: finalProduct, staff: staffId, rating: null, used: false });
       
     const row = new ActionRowBuilder().addComponents(
@@ -239,17 +239,17 @@ async function handleCloseTicket(interaction, sendVouch) {
 
 // ==================== VOUCH SYSTEM ====================
 
-// Holt alle Member mit der Support-Rolle für das Auswahlmenü
+// Gets all members with the support role for the selection menu
 async function getSupportStaffOptions(guild) {
   if (!guild) return [];
 
   try {
-    // Stellt sicher, dass der Member-Cache vollständig ist, bevor wir filtern
+    // Make sure the member cache is fully populated before filtering
     if (guild.members.cache.size < guild.memberCount) {
       await guild.members.fetch().catch(() => {});
     }
   } catch (e) {
-    console.error('❌ Fehler beim Laden der Member:', e.message);
+    console.error('❌ Error loading members:', e.message);
   }
 
   const role = guild.roles.cache.get(SUPPORT_ROLE_ID);
@@ -258,14 +258,14 @@ async function getSupportStaffOptions(guild) {
   return role.members.map(member => ({
     label: member.displayName.slice(0, 100),
     value: member.id
-  })).slice(0, 24); // Discord erlaubt max. 25 Optionen — 1 Platz für "Unbekannt" freihalten
+  })).slice(0, 24); // Discord allows max. 25 options — keep 1 slot free just in case
 }
 
 async function handleVouchStartButton(interaction) {
   const sessionID = interaction.customId.replace('vstart-', '');
   const cachedData = vouchCache.get(sessionID);
 
-  // Überprüfen, ob die Session existiert oder ob der Vouch bereits genutzt wurde
+  // Check whether the session exists or the vouch has already been used
   if (!cachedData || cachedData.used) {
     return interaction.reply({ 
       content: '❌ You have already submitted a vouch for this purchase or this vouch session has expired!', 
@@ -300,15 +300,15 @@ async function handleVouchRatingSelect(interaction) {
     });
   }
 
-  // Rating merken, bevor wir zum nächsten Schritt gehen
+  // Remember the rating before moving to the next step
   cachedData.rating = rating;
   vouchCache.set(sessionID, cachedData);
 
   const guild = client.guilds.cache.get(GUILD_ID);
   const staffOptions = await getSupportStaffOptions(guild);
 
-  // Falls aus irgendeinem Grund keine Support-Member gefunden werden, überspringen wir
-  // diesen Schritt und behalten den Schließer als Handled-By-Wert (siehe handleCloseTicket)
+  // If no support members are found for some reason, skip this step
+  // and keep the closer as the Handled-By value (see handleCloseTicket)
   if (staffOptions.length === 0) {
     const modal = new ModalBuilder()
       .setCustomId(`vmodal-${sessionID}`)
@@ -330,11 +330,11 @@ async function handleVouchRatingSelect(interaction) {
   const row = new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
       .setCustomId(`vstaff-${sessionID}`)
-      .setPlaceholder('Welcher Supporter hat dir geholfen?')
+      .setPlaceholder('Which staff member helped you?')
       .addOptions(staffOptions)
   );
 
-  await interaction.reply({ content: 'Wer aus unserem Team hat dich betreut?', components: [row], ephemeral: true });
+  await interaction.reply({ content: 'Which member of our team assisted you?', components: [row], ephemeral: true });
 }
 
 async function handleVouchStaffSelect(interaction) {
@@ -380,7 +380,7 @@ async function handleVouchModalSubmit(interaction) {
     });
   }
 
-  // Markiere die Session sofort als benutzt, um Doppel-Absendungen zu verhindern
+  // Mark the session as used immediately to prevent double submissions
   cachedData.used = true;
   vouchCache.set(sessionID, cachedData);
 
@@ -388,7 +388,7 @@ async function handleVouchModalSubmit(interaction) {
   const rating = cachedData.rating || '5';
   const staffId = cachedData.staff || 'none';
 
-  // Lösche den Cache-Eintrag komplett nach erfolgreicher Verarbeitung
+  // Delete the cache entry entirely after successful processing
   vouchCache.delete(sessionID); 
 
   const text = interaction.fields.getTextInputValue('vouch_text') || '*No comment left*';
@@ -425,24 +425,24 @@ async function handleVouchModalSubmit(interaction) {
         if (member && !member.roles.cache.has(CUSTOMER_ROLE_ID)) {
           await member.roles.add(CUSTOMER_ROLE_ID);
         }
-      } catch (err) { console.error('❌ Rollenfehler:', err); }
+      } catch (err) { console.error('❌ Role error:', err); }
     }
 
-    // "Buy Again" nach 2 Sekunden senden
+    // Send "Buy Again" after 2 seconds
     setTimeout(async () => {
       if (!GUILD_ID || !TICKET_PANEL_CHANNEL_ID) {
-        console.warn("⚠️ Warnung: GUILD_ID oder TICKET_PANEL_CHANNEL_ID fehlt in der .env!");
+        console.warn("⚠️ Warning: GUILD_ID or TICKET_PANEL_CHANNEL_ID is missing from the .env!");
       }
 
       const channelLink = `https://discord.com/channels/${GUILD_ID}/${TICKET_PANEL_CHANNEL_ID || '0'}`;
-      console.log(`🔗 Versuche 'Buy Again' zu senden mit URL: ${channelLink}`);
+      console.log(`🔗 Attempting to send 'Buy Again' with URL: ${channelLink}`);
 
       const upsellEmbed = new EmbedBuilder()
         .setColor(0xe74c3c)
         .setTitle('🛍️ Ready for more?')
         .setDescription(`Thank you again for buying at **Chud Hub**!\n\nIf you want to place another order or browse our packages again, click the button below to go straight to our ticket channel! Our team is always ready to assist you! 🌟`);
       
-      // Fehlerfreie Link-Button Erstellung mit .setURL(...) in Großbuchstaben!
+      // Error-free link button creation using .setURL(...) in uppercase!
       const buyAgainBtn = new ButtonBuilder()
         .setLabel('Buy Again')
         .setEmoji('🛒')
@@ -453,19 +453,19 @@ async function handleVouchModalSubmit(interaction) {
       
       try {
         await interaction.user.send({ embeds: [upsellEmbed], components: [upsellRow] });
-        console.log("✅ 'Buy Again' wurde erfolgreich per DM gesendet.");
+        console.log("✅ 'Buy Again' was successfully sent via DM.");
       } catch (dmError) {
-        console.error("❌ DM gescheitert. Grund:", dmError.message, "- Versuche Fallback im Chat...");
+        console.error("❌ DM failed. Reason:", dmError.message, "- Trying fallback in channel...");
         
-        // Fallback im Kanal
+        // Fallback in the channel
         await interaction.followUp({ 
           embeds: [upsellEmbed], 
           components: [upsellRow], 
           ephemeral: true 
         }).then(() => {
-          console.log("✅ 'Buy Again' wurde erfolgreich als flüchtiges Followup im Kanal gepostet.");
+          console.log("✅ 'Buy Again' was successfully posted as an ephemeral follow-up in the channel.");
         }).catch((followUpError) => {
-          console.error("❌ Fallback im Kanal ist ebenfalls gescheitert! Grund:", followUpError.message);
+          console.error("❌ Fallback in the channel also failed! Reason:", followUpError.message);
         });
       }
     }, 2000);
@@ -517,7 +517,7 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.isChatInputCommand() && interaction.commandName === 'setup-tickets') {
       const emb = new EmbedBuilder().setColor(0x2b2d31).setTitle('🎫 Tickets & Orders').setDescription('Need help or want to buy something? Choose an option below.');
       
-      // Erstellt drei Buttons: Place Order, Website (Link) und Support
+      // Creates three buttons: Place Order, Website (link) and Support
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId('open_ticket_order').setLabel('Place Order').setEmoji('🛒').setStyle(ButtonStyle.Success), 
         new ButtonBuilder().setLabel('Website').setEmoji('🌐').setStyle(ButtonStyle.Link).setURL('https://the-chud-hub.mysellauth.com/'),
